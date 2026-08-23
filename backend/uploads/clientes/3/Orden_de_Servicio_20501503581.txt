@@ -1,0 +1,4 @@
+Documento: Orden de Servicio
+Cliente: Inmobiliaria Paz Centenario SAC
+RUC: 20501503581
+Fecha: 2026-06-13

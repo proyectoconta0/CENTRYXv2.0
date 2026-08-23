@@ -1,0 +1,4 @@
+Documento: Contrato
+Cliente: Los Portales SA
+RUC: 20100897608
+Fecha: 2026-06-13

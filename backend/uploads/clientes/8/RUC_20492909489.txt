@@ -1,0 +1,4 @@
+Documento: RUC
+Cliente: Menorca Inversiones SAC
+RUC: 20492909489
+Fecha: 2026-06-13

@@ -1,0 +1,4 @@
+Documento: Orden de Servicio
+Cliente: JE Construcciones Generales SAC
+RUC: 20503564310
+Fecha: 2026-06-13

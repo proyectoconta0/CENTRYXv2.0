@@ -1,0 +1,4 @@
+Documento: Contrato
+Cliente: Edifica SAC
+RUC: 20556008827
+Fecha: 2026-06-13

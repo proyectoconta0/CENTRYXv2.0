@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{tipo_documento_label}} {{numero_documento}}</title>
+    <link rel="stylesheet" href="factura.css">
+</head>
+<body>
+    <div class="factura">
+
+        <!-- ENCABEZADO -->
+        <div class="encabezado">
+            <!-- Logo -->
+            <div class="logo-container">
+                {{#empresa.logo_url}}
+                <img src="{{empresa.logo_url}}" alt="Logo" class="logo">
+                {{/empresa.logo_url}}
+                {{^empresa.logo_url}}
+                <div class="logo-placeholder">{{empresa.nombre_empresa}}</div>
+                {{/empresa.logo_url}}
+            </div>
+
+            <!-- Datos empresa -->
+            <div class="empresa-datos">
+                <div class="empresa-nombre">{{empresa.nombre_empresa}}</div>
+                <div class="empresa-linea">RUC: {{empresa.ruc}}</div>
+                <div class="empresa-linea">{{empresa.direccion}}</div>
+                <div class="empresa-linea">{{empresa.telefono}} · {{empresa.email}}</div>
+                {{#empresa.giro_negocio}}
+                <div class="empresa-linea empresa-giro">{{empresa.giro_negocio}}</div>
+                {{/empresa.giro_negocio}}
+            </div>
+
+            <!-- Badge tipo comprobante + numeración + fechas -->
+            <div class="documento-box">
+                <div class="badge-tipo" data-tipo="{{tipo_documento}}">{{tipo_documento_label}}</div>
+                <div class="documento-numero">{{numero_documento}}</div>
+                {{#documento_referencia}}
+                <div class="referencia-doc">Referencia: {{documento_referencia}}</div>
+                {{/documento_referencia}}
+                <div class="documento-fecha"><span>Fecha:</span> {{fecha_emision}}</div>
+                {{#fecha_vencimiento}}
+                <div class="documento-fecha"><span>Venc.:</span> {{fecha_vencimiento}}</div>
+                {{/fecha_vencimiento}}
+            </div>
+        </div>
+
+        <!-- DATOS CLIENTE -->
+        <div class="cliente-bar">
+            <div class="cliente-fila"><span class="cliente-label">{{cliente_label}}:</span>{{cliente.nombre}}</div>
+            <div class="cliente-fila"><span class="cliente-label">RUC/DNI:</span>{{cliente.ruc}}</div>
+            <div class="cliente-fila"><span class="cliente-label">DIRECCIÓN:</span>{{cliente.direccion}}</div>
+        </div>
+
+        <!-- TABLA ITEMS -->
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th class="col-numero">N°</th>
+                    <th class="col-descripcion">DESCRIPCIÓN DEL SERVICIO</th>
+                    <th class="col-monto">MONTO ({{moneda_label}})</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{#items}}
+                <tr>
+                    <td class="col-numero">{{numero}}</td>
+                    <td class="col-descripcion">{{descripcion}}</td>
+                    <td class="col-monto">{{total}}</td>
+                </tr>
+                {{/items}}
+            </tbody>
+        </table>
+
+        <!-- TOTALES -->
+        <div class="totales-wrap">
+            <table class="totales-table">
+                <tr>
+                    <td class="label-total">OP. GRAVADA</td>
+                    <td class="valor-total">{{base_imponible}}</td>
+                </tr>
+                <tr>
+                    <td class="label-total">IGV (18%)</td>
+                    <td class="valor-total">{{igv}}</td>
+                </tr>
+                {{#adelanto}}
+                <tr>
+                    <td class="label-total">ADELANTO</td>
+                    <td class="valor-total">{{adelanto}}</td>
+                </tr>
+                {{/adelanto}}
+                <tr class="total-final">
+                    <td class="label-total">TOTAL</td>
+                    <td class="valor-total">{{moneda_label}} {{total}}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- MONTO EN LETRAS -->
+        <div class="monto-letras">{{monto_en_letras}}</div>
+
+        <!-- OBSERVACIONES -->
+        {{#observaciones}}
+        <div class="observaciones"><span class="label">Observaciones:</span> {{observaciones}}</div>
+        {{/observaciones}}
+
+        <!-- CUENTAS BANCARIAS + QR -->
+        <div class="info-adicional">
+            <div class="cuentas-section">
+                {{#cuentas_bancarias}}
+                <div class="cuenta-item">{{.}}</div>
+                {{/cuentas_bancarias}}
+            </div>
+            <div class="qr-section">
+                {{#qr_base64}}
+                <img src="{{qr_base64}}" alt="QR" class="qr">
+                {{/qr_base64}}
+            </div>
+        </div>
+
+        <!-- FORMA DE PAGO + FIRMA -->
+        <div class="pie-final">
+            <div class="pie-izq">
+                <div class="pago-fila"><strong>Forma de pago:</strong> {{forma_pago}}</div>
+                <div class="footer-legal">Representación impresa del comprobante electrónico — Autorizado por SUNAT.</div>
+                <div class="footer-brand">Generado por Centryx | centryx.pe</div>
+            </div>
+
+            <div class="firma-section">
+                <div class="firma-para">Para: {{empresa.nombre_empresa}}</div>
+                <div class="firma-linea"></div>
+                <div class="firma-texto">Firma y Sello Autorizado</div>
+            </div>
+        </div>
+
+        <!-- FOOTER AUDITORÍA -->
+        <div class="footer">
+            Usuario: {{usuario}} · {{generado_en}}
+        </div>
+
+    </div>
+</body>
+</html>

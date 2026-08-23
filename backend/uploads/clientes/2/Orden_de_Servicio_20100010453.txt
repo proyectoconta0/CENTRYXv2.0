@@ -1,0 +1,4 @@
+Documento: Orden de Servicio
+Cliente: Constructora Cosapi SAC
+RUC: 20100010453
+Fecha: 2026-06-13

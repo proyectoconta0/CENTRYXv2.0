@@ -1,0 +1,502 @@
+/* ═══════════════════════════════════════════════════════════════════ */
+/* RESET Y ESTILOS BASE */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 9px;
+    line-height: 1;
+    color: #000000;
+    padding: 0;
+    margin: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* CONTENEDOR PRINCIPAL */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.factura {
+    width: 210mm;
+    height: 297mm;
+    padding: 10mm;
+    background: white;
+    color: #000;
+    position: relative;
+    page-break-after: always;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* ENCABEZADO */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.encabezado {
+    display: flex;
+    gap: 4mm;
+    margin-bottom: 2mm;
+    min-height: 35mm;
+}
+
+.logo-container {
+    width: 35mm;
+    height: 35mm;
+    border: 0.8px solid #cc0000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 2mm;
+    background: #fafafa;
+}
+
+.logo {
+    max-width: 33mm;
+    max-height: 33mm;
+    object-fit: contain;
+}
+
+.logo-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 7px;
+    color: #999;
+    text-align: center;
+    line-height: 1.3;
+}
+
+.empresa-center {
+    flex: 1;
+    border: 0.8px solid #000;
+    padding: 2mm 3mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+}
+
+.empresa-nombre {
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 1.2;
+    margin-bottom: 1mm;
+}
+
+.empresa-ruc {
+    font-size: 8px;
+    margin-bottom: 1mm;
+}
+
+.empresa-dir {
+    font-size: 8px;
+    line-height: 1.2;
+}
+
+.empresa-contacto {
+    font-size: 8px;
+    line-height: 1.2;
+}
+
+.tipo-comprobante-box {
+    width: 42mm;
+    border: 0.8px solid #000;
+    padding: 2mm 2mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    text-align: center;
+}
+
+.ruc-label {
+    font-size: 7px;
+    font-weight: bold;
+}
+
+.ruc-numero {
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 2mm;
+}
+
+.tipo-label {
+    font-size: 8px;
+    font-weight: bold;
+    border-top: 0.5px solid #000;
+    padding-top: 1mm;
+    margin-top: 1mm;
+}
+
+.tipo-numero {
+    font-size: 10px;
+    font-weight: bold;
+    color: #cc0000;
+    margin-top: 1mm;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* GIRO COMERCIAL */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.giro {
+    font-size: 8px;
+    font-weight: bold;
+    margin-bottom: 2mm;
+    line-height: 1.3;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* DATOS CLIENTE Y COMPROBANTE */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.datos-cliente {
+    display: flex;
+    gap: 3mm;
+    margin-bottom: 2mm;
+    min-height: 20mm;
+}
+
+.cliente-box,
+.comprobante-box {
+    flex: 1;
+    border: 0.8px solid #000;
+    padding: 2mm 3mm;
+    font-size: 8px;
+}
+
+.label-row {
+    display: flex;
+    margin-bottom: 1mm;
+    line-height: 1.2;
+}
+
+.label-row .label {
+    font-weight: bold;
+    margin-right: 2mm;
+    min-width: 35mm;
+}
+
+.label-row span:last-child {
+    flex: 1;
+    word-wrap: break-word;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* TABLA DE ITEMS */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.tabla-container {
+    margin-bottom: 2mm;
+    border: 0.8px solid #000;
+}
+
+.items-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8px;
+}
+
+.items-table thead tr {
+    background: #f0f0f0;
+}
+
+.items-table th {
+    border: 0.5px solid #000;
+    padding: 2mm 1.5mm;
+    font-weight: bold;
+    text-align: center;
+    font-size: 7px;
+    height: 6mm;
+}
+
+.items-table td {
+    border: 0.5px solid #000;
+    padding: 1mm 1.5mm;
+    height: 5mm;
+    font-size: 8px;
+}
+
+.items-table tr.fila-vacia {
+    height: 5mm;
+}
+
+.items-table tr.fila-vacia td {
+    height: 5mm;
+}
+
+.col-numero { width: 4%; text-align: center; }
+.col-cantidad { width: 8%; text-align: center; }
+.col-unidad { width: 8%; text-align: center; }
+.col-codigo { width: 8%; text-align: center; }
+.col-descripcion { width: 30%; text-align: left; }
+.col-vunit { width: 9%; text-align: right; }
+.col-igv { width: 8%; text-align: right; }
+.col-punit { width: 9%; text-align: right; }
+.col-total { width: 10%; text-align: right; }
+
+.number {
+    text-align: right;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* MONTO EN LETRAS */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.monto-letras {
+    border: 0.8px solid #000;
+    padding: 2mm 3mm;
+    margin-bottom: 2mm;
+    font-size: 9px;
+    text-align: right;
+    font-weight: bold;
+    min-height: 5mm;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* OBSERVACIONES */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.observaciones {
+    border: 0.8px solid #000;
+    padding: 2mm 3mm;
+    margin-bottom: 2mm;
+    font-size: 8px;
+    min-height: 8mm;
+    line-height: 1.3;
+}
+
+.observaciones .label {
+    font-weight: bold;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* PIE DE PÁGINA */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.pie {
+    display: flex;
+    gap: 2mm;
+    margin-bottom: 2mm;
+    min-height: 40mm;
+}
+
+.cuentas-section {
+    flex: 1;
+    border: 0.8px solid #000;
+    padding: 2mm;
+    font-size: 7px;
+    overflow: hidden;
+}
+
+.cuenta-item {
+    margin-bottom: 2mm;
+    line-height: 1.2;
+    font-size: 7px;
+}
+
+.cuenta-item strong {
+    font-size: 7px;
+    display: block;
+}
+
+.qr-section {
+    flex: 0 0 35mm;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1mm;
+}
+
+.qr {
+    width: 30mm;
+    height: 30mm;
+    border: 0.8px solid #000;
+}
+
+.qr-placeholder {
+    width: 30mm;
+    height: 30mm;
+    border: 0.8px solid #999;
+    background: #f0f0f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 7px;
+    color: #999;
+}
+
+.totales-section {
+    flex: 1;
+    border: 0.8px solid #000;
+    padding: 0;
+    font-size: 7px;
+}
+
+.totales-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 7px;
+}
+
+.totales-table tr {
+    height: 4mm;
+}
+
+.totales-table td {
+    border: 0.3px solid #e0e0e0;
+    padding: 0.5mm 2mm;
+    font-size: 7px;
+}
+
+.label-total {
+    text-align: left;
+    font-weight: bold;
+}
+
+.valor-total {
+    text-align: right;
+}
+
+.total-final {
+    background: #000;
+    color: #fff;
+    font-weight: bold;
+}
+
+.total-final .label-total {
+    color: #fff;
+}
+
+.valor-total-final {
+    text-align: right;
+    color: #fff;
+    font-weight: bold;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* FOOTER */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.footer {
+    border: 0.8px solid #000;
+    padding: 2mm 3mm;
+    text-align: center;
+    font-size: 8px;
+    min-height: 12mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.footer-title {
+    font-size: 11px;
+    font-weight: bold;
+    margin-bottom: 1mm;
+}
+
+.footer-msg {
+    font-size: 8px;
+    margin-bottom: 1mm;
+    line-height: 1.2;
+}
+
+.footer-user {
+    font-size: 7px;
+    margin-bottom: 0.5mm;
+    color: #333;
+}
+
+.footer-legal {
+    font-size: 6px;
+    margin-bottom: 0.5mm;
+    line-height: 1.2;
+    color: #666;
+}
+
+.footer-brand {
+    font-size: 8px;
+    font-weight: bold;
+    margin-bottom: 0.5mm;
+}
+
+.footer-info {
+    font-size: 7px;
+    color: #999;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* ESTILOS GLOBALES */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.label {
+    font-weight: bold;
+}
+
+.bold {
+    font-weight: bold;
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* IMPRESIÓN */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+@media print {
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    html, body {
+        width: 210mm;
+        height: 297mm;
+        margin: 0;
+        padding: 0;
+        background: white;
+    }
+
+    .factura {
+        width: 210mm;
+        height: 297mm;
+        padding: 10mm;
+        margin: 0;
+        page-break-after: always;
+        box-shadow: none;
+    }
+
+    @page {
+        size: A4;
+        margin: 0;
+    }
+
+    .no-print {
+        display: none !important;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* PANTALLA */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+@media screen {
+    .factura {
+        margin: 20px auto;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+}

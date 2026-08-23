@@ -1,0 +1,4 @@
+Documento: RUC
+Cliente: AESA Contratistas SAC
+RUC: 20512956935
+Fecha: 2026-06-13

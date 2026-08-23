@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orden de Pago {{orden.numero}}</title>
+    <link rel="stylesheet" href="factura.css">
+</head>
+<body>
+    <!-- Mismo CSS/diseño que factura.html — solo cambia el color de marca
+         (azul oscuro en vez de morado) vía la variable --color-primario,
+         y el contenido de las secciones. -->
+    <div class="factura" style="--color-primario:#1E40AF;">
+
+        <!-- ENCABEZADO -->
+        <div class="encabezado">
+            <!-- Logo -->
+            <div class="logo-container">
+                {{#empresa.logo_url}}
+                <img src="{{empresa.logo_url}}" alt="Logo" class="logo">
+                {{/empresa.logo_url}}
+                {{^empresa.logo_url}}
+                <div class="logo-placeholder">{{empresa.nombre_empresa}}</div>
+                {{/empresa.logo_url}}
+            </div>
+
+            <!-- Datos empresa -->
+            <div class="empresa-datos">
+                <div class="empresa-nombre">{{empresa.nombre_empresa}}</div>
+                <div class="empresa-linea">RUC: {{empresa.ruc}}</div>
+                <div class="empresa-linea">{{empresa.direccion}}</div>
+                <div class="empresa-linea">{{empresa.telefono}} · {{empresa.email}}</div>
+            </div>
+
+            <!-- Badge + numeración + fecha -->
+            <div class="documento-box">
+                <div class="badge-tipo">ORDEN DE PAGO</div>
+                <div class="documento-numero">{{orden.numero}}</div>
+                <div class="documento-fecha"><span>Fecha:</span> {{orden.fecha}}</div>
+            </div>
+        </div>
+
+        <!-- PROVEEDOR -->
+        <div class="cliente-bar">
+            <div class="cliente-fila"><span class="cliente-label">PROVEEDOR:</span>{{proveedor.razon_social}}</div>
+            <div class="cliente-fila"><span class="cliente-label">RUC:</span>{{proveedor.ruc}}</div>
+        </div>
+
+        <!-- TABLA DE COMPROBANTES -->
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th class="col-numero" style="width:6%;">N°</th>
+                    <th style="width:22%; text-align:left;">N° COMPROBANTE</th>
+                    <th class="col-descripcion" style="width:42%;">DESCRIPCIÓN</th>
+                    <th class="col-monto" style="width:30%;">MONTO (S/)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{#items}}
+                <tr>
+                    <td class="col-numero">{{numero}}</td>
+                    <td>{{numero_comprobante}}</td>
+                    <td class="col-descripcion">{{descripcion}}</td>
+                    <td class="col-monto">{{monto}}</td>
+                </tr>
+                {{/items}}
+            </tbody>
+        </table>
+
+        <!-- TOTAL -->
+        <div class="totales-wrap">
+            <table class="totales-table">
+                <tr class="total-final">
+                    <td class="label-total">TOTAL A PAGAR</td>
+                    <td class="valor-total">S/ {{total}}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- MÉTODO DE PAGO -->
+        <div class="cliente-bar">
+            <div class="cliente-fila"><span class="cliente-label">MÉTODO DE PAGO:</span>{{metodo_pago}}</div>
+            {{#banco}}
+            <div class="cliente-fila"><span class="cliente-label">BANCO:</span>{{banco}}</div>
+            {{/banco}}
+            {{#numero_cuenta}}
+            <div class="cliente-fila"><span class="cliente-label">N° CUENTA:</span>{{numero_cuenta}}</div>
+            {{/numero_cuenta}}
+        </div>
+
+        <!-- OBSERVACIONES -->
+        <div class="observaciones">
+            <span class="label">Observaciones:</span> {{observacion}}
+            <div style="border-bottom:1px solid #999; height:6mm; margin-top:2mm;"></div>
+        </div>
+
+        <!-- FIRMAS -->
+        <div class="pie-final">
+            <div class="firma-section" style="width:50%;">
+                <div class="firma-para" style="font-weight:bold; color:#333;">ELABORADO POR:</div>
+                <div class="firma-linea"></div>
+                <div class="firma-texto">Nombre y Firma</div>
+            </div>
+            <div class="firma-section" style="width:50%;">
+                <div class="firma-para" style="font-weight:bold; color:#333;">APROBADO POR:</div>
+                <div class="firma-linea"></div>
+                <div class="firma-texto">Nombre y Firma</div>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <div class="footer">
+            <div class="footer-brand">Generado por Centryx | centryx.pe</div>
+        </div>
+
+    </div>
+</body>
+</html>

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{tipo_documento_label}} {{numero_documento}}</title>
+    <link rel="stylesheet" href="factura.css">
+</head>
+<body>
+    <div class="factura">
+
+        <!-- ENCABEZADO -->
+        <div class="encabezado">
+            <!-- Logo -->
+            <div class="logo-container">
+                {{#empresa.logo_url}}
+                <img src="{{empresa.logo_url}}" alt="Logo" class="logo">
+                {{/empresa.logo_url}}
+                {{^empresa.logo_url}}
+                <div class="logo-placeholder">
+                    <div>{{empresa.nombre_empresa}}</div>
+                    <div style="font-size: 6px; margin-top: 2px;">Logo de la empresa</div>
+                </div>
+                {{/empresa.logo_url}}
+            </div>
+
+            <!-- Datos empresa (centro) -->
+            <div class="empresa-center">
+                <div class="empresa-nombre">{{empresa.nombre_empresa}}</div>
+                <div class="empresa-ruc">({{empresa.ruc}})</div>
+                <div class="empresa-dir">{{empresa.direccion}}</div>
+                <div class="empresa-contacto">{{empresa.telefono}}</div>
+                <div class="empresa-contacto">Correo: {{empresa.email}}</div>
+            </div>
+
+            <!-- RUC y tipo comprobante (derecha) -->
+            <div class="tipo-comprobante-box">
+                <div class="ruc-label">RUC</div>
+                <div class="ruc-numero">{{empresa.ruc}}</div>
+
+                <div class="tipo-label">{{tipo_documento_label}}</div>
+                <div class="tipo-numero">{{numero_documento}}</div>
+            </div>
+        </div>
+
+        <!-- GIRO COMERCIAL -->
+        <div class="giro">
+            {{empresa.giro_negocio}}
+        </div>
+
+        <!-- DATOS CLIENTE / COMPROBANTE -->
+        <div class="datos-cliente">
+            <div class="cliente-box">
+                <div class="label-row"><span class="label">{{cliente_label}}:</span> <span>{{cliente.nombre}}</span></div>
+                <div class="label-row"><span class="label">RUC:</span> <span>{{cliente.ruc}}</span></div>
+                <div class="label-row"><span class="label">DIRECCIÓN:</span> <span>{{cliente.direccion}}</span></div>
+            </div>
+
+            <div class="comprobante-box">
+                <div class="label-row"><span class="label">FECHA EMISIÓN:</span> <span>{{fecha_emision}}</span></div>
+                <div class="label-row"><span class="label">FECHA VENCIMIENTO:</span> <span>{{fecha_vencimiento}}</span></div>
+                <div class="label-row"><span class="label">MONEDA:</span> <span>{{moneda_label}}</span></div>
+                <div class="label-row"><span class="label">FORMA DE PAGO:</span> <span>{{forma_pago}}</span></div>
+            </div>
+        </div>
+
+        <!-- TABLA ITEMS -->
+        <div class="tabla-container">
+            <table class="items-table">
+                <thead>
+                    <tr>
+                        <th class="col-numero">N°</th>
+                        <th class="col-cantidad">CANT.</th>
+                        <th class="col-unidad">UNIDAD</th>
+                        <th class="col-codigo">CÓDIGO</th>
+                        <th class="col-descripcion">DESCRIPCIÓN</th>
+                        <th class="col-vunit">V.UNIT.</th>
+                        <th class="col-igv">IGV</th>
+                        <th class="col-punit">P.UNIT.</th>
+                        <th class="col-total">TOTAL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{#items}}
+                    <tr>
+                        <td class="col-numero">{{numero}}</td>
+                        <td class="col-cantidad">{{cantidad}}</td>
+                        <td class="col-unidad">{{unidad}}</td>
+                        <td class="col-codigo">{{codigo}}</td>
+                        <td class="col-descripcion">{{descripcion}}</td>
+                        <td class="col-vunit number">{{v_unit}}</td>
+                        <td class="col-igv number">{{igv}}</td>
+                        <td class="col-punit number">{{p_unit}}</td>
+                        <td class="col-total number">{{total}}</td>
+                    </tr>
+                    {{/items}}
+                    
+                    <!-- Filas vacías mínimo 12 -->
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="fila-vacia"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- MONTO EN LETRAS -->
+        <div class="monto-letras">
+            <strong>{{monto_en_letras}}</strong>
+        </div>
+
+        <!-- OBSERVACIONES -->
+        <div class="observaciones">
+            <span class="label">OBSERVACIONES:</span> {{observaciones}}
+        </div>
+
+        <!-- PIE DE PÁGINA -->
+        <div class="pie">
+            <!-- Cuentas bancarias (izquierda) -->
+            <div class="cuentas-section">
+                {{#cuentas_bancarias}}
+                <div class="cuenta-item">
+                    <strong>{{.}}</strong>
+                </div>
+                {{/cuentas_bancarias}}
+            </div>
+
+            <!-- QR (centro) -->
+            <div class="qr-section">
+                {{#qr_base64}}
+                <img src="{{qr_base64}}" alt="QR" class="qr">
+                {{/qr_base64}}
+                {{^qr_base64}}
+                <div class="qr-placeholder">[QR]</div>
+                {{/qr_base64}}
+            </div>
+
+            <!-- Totales (derecha) -->
+            <div class="totales-section">
+                <table class="totales-table">
+                    <tr>
+                        <td class="label-total">OP. GRAVADAS:</td>
+                        <td class="valor-total">{{base_imponible}}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-total">IGV 18%:</td>
+                        <td class="valor-total">{{igv}}</td>
+                    </tr>
+                    {{#adelanto}}
+                    <tr>
+                        <td class="label-total">ADELANTO:</td>
+                        <td class="valor-total">{{adelanto}}</td>
+                    </tr>
+                    {{/adelanto}}
+                    <tr class="total-final">
+                        <td class="label-total"><strong>TOTAL:</strong></td>
+                        <td class="valor-total-final"><strong>{{moneda_label}} {{total}}</strong></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <div class="footer">
+            <div class="footer-title">¡MUCHAS GRACIAS!</div>
+            <div class="footer-msg">{{mensaje_footer}}</div>
+            <div class="footer-user">USUARIO: {{usuario}} - FECHA Y HORA: {{generado_en}}</div>
+            <div class="footer-legal">Representación impresa de la {{tipo_documento_label}}. Consulte su comprobante en línea.</div>
+            <div class="footer-brand">SmartClic ™</div>
+            <div class="footer-info">Comprobante emitido a través de Gerencial Pro</div>
+        </div>
+
+    </div>
+</body>
+</html>

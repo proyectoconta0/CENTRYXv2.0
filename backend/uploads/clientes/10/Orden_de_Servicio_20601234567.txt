@@ -1,0 +1,4 @@
+Documento: Orden de Servicio
+Cliente: Grupo T&C Inmobiliaria SAC
+RUC: 20601234567
+Fecha: 2026-06-13

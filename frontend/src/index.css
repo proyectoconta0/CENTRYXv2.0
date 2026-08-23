@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { font-family: 'Inter', sans-serif; }
+
+body {
+  @apply bg-gray-50 text-gray-800;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Responsive móvil (<= 768px) — aplica globalmente a todos los módulos
+   que ya siguen los patrones de modal/tabla/formulario del sistema.
+   ══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Modales: reduce el padding del overlay para que el modal ocupe ~95%
+     del ancho de pantalla (el div interno ya usa w-full + max-w-*). */
+  .fixed.inset-0 {
+    padding: 0.5rem;
+  }
+
+  /* Tablas: habilita scroll horizontal en contenedores que las envuelven
+     (patrón ya usado en Proveedores/Gastos: <div className="overflow-x-auto">).
+     Para módulos sin ese wrapper, el propio <table> se vuelve scrolleable. */
+  table {
+    -webkit-overflow-scrolling: touch;
+  }
+  .bg-white.rounded-xl:has(> table),
+  .bg-white.rounded-xl:has(> div > table) {
+    overflow-x: auto;
+  }
+
+  /* Formularios: campos a 100% de ancho y botones con área táctil mínima. */
+  form input:not([type="checkbox"]):not([type="radio"]),
+  form select,
+  form textarea {
+    width: 100%;
+  }
+  form button[type="submit"] {
+    min-height: 44px;
+  }
+
+  /* Utilidad para ocultar columnas secundarias en tablas (RUC, Distrito,
+     Código, etc.) — aplicar a <th>/<td> con className="gp-col-mobile-hide". */
+  .gp-col-mobile-hide {
+    display: none;
+  }
+}

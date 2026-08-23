@@ -1,0 +1,435 @@
+<title>Auditoría Centryx</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --ink: #171b1a;
+    --ink-soft: #4b534f;
+    --paper: #eef1ec;
+    --paper-raised: #ffffff;
+    --line: #d6dbd3;
+    --line-soft: #e3e7e0;
+    --accent: #1f6f6b;
+    --accent-ink: #0f4744;
+    --accent-tint: #e0edeb;
+    --ok: #1a7a4f;
+    --ok-tint: #e3f3e8;
+    --warn: #a3690f;
+    --warn-tint: #faefd9;
+    --err: #b3392c;
+    --err-tint: #f8e4e0;
+    --shadow: 0 1px 2px rgba(23,27,26,0.04), 0 8px 24px -12px rgba(23,27,26,0.18);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --ink: #eef1ec;
+      --ink-soft: #a9b3ac;
+      --paper: #12100E;
+      --paper-raised: #1a1e1c;
+      --line: #2c322e;
+      --line-soft: #23272430;
+      --accent: #4fb3ac;
+      --accent-ink: #bfe8e3;
+      --accent-tint: #16302e;
+      --ok: #55c98a;
+      --ok-tint: #163425;
+      --warn: #e0a83f;
+      --warn-tint: #392e13;
+      --err: #e2695a;
+      --err-tint: #3a1e1a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 28px -12px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink: #eef1ec;
+    --ink-soft: #a9b3ac;
+    --paper: #12100E;
+    --paper-raised: #1a1e1c;
+    --line: #2c322e;
+    --line-soft: #23272430;
+    --accent: #4fb3ac;
+    --accent-ink: #bfe8e3;
+    --accent-tint: #16302e;
+    --ok: #55c98a;
+    --ok-tint: #163425;
+    --warn: #e0a83f;
+    --warn-tint: #392e13;
+    --err: #e2695a;
+    --err-tint: #3a1e1a;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 28px -12px rgba(0,0,0,0.5);
+  }
+
+  *{ box-sizing: border-box; }
+  html{ text-size-adjust: 100%; }
+  body{
+    margin:0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{ animation: none !important; transition: none !important; }
+  }
+
+  h1,h2,h3{ font-family:'Newsreader', Georgia, serif; font-weight:600; text-wrap:balance; color:var(--ink); margin:0; }
+  .mono{ font-family:'IBM Plex Mono', ui-monospace, monospace; }
+  a{ color: var(--accent-ink); }
+
+  .wrap{ max-width: 920px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ── Masthead ───────────────────────────────────────────── */
+  .masthead{
+    padding: 56px 24px 40px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--accent-tint), transparent 140%);
+  }
+  .masthead-inner{ max-width: 920px; margin:0 auto; }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    font-weight:600;
+    display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow::before{ content:""; width:20px; height:1.5px; background: var(--accent); display:inline-block; }
+  h1.title{ font-size: clamp(2.1rem, 5vw, 3.1rem); margin-top:14px; letter-spacing:-0.01em; }
+  .subtitle{ margin-top:10px; color: var(--ink-soft); font-size:1.02rem; max-width: 62ch; }
+  .meta-row{ margin-top:22px; display:flex; flex-wrap:wrap; gap:10px 28px; font-size:13px; color:var(--ink-soft); }
+  .meta-row b{ color:var(--ink); font-weight:600; }
+
+  /* ── Summary panel ──────────────────────────────────────── */
+  .summary{
+    margin-top: -1px;
+    padding: 32px 24px 8px;
+  }
+  .summary-grid{
+    max-width:920px; margin:0 auto;
+    display:grid; grid-template-columns: 200px 1fr; gap: 20px;
+  }
+  @media (max-width: 680px){ .summary-grid{ grid-template-columns: 1fr; } }
+
+  .verdict-card{
+    background: var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px 18px;
+    box-shadow: var(--shadow);
+    display:flex; flex-direction:column; align-items:flex-start; gap:6px;
+  }
+  .verdict-card .rating{ font-family:'Newsreader', serif; font-size: 3rem; font-weight:600; line-height:1; color:var(--accent-ink); }
+  .verdict-card .rating span{ font-size:1.1rem; color:var(--ink-soft); font-weight:500; }
+  .verdict-card .rating-label{ font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; }
+  .verdict-badge{
+    margin-top:10px;
+    display:inline-flex; align-items:center; gap:7px;
+    padding:6px 12px; border-radius:999px;
+    background: var(--warn-tint); color: var(--warn);
+    font-weight:600; font-size:12.5px; font-family:'IBM Plex Mono',monospace;
+    letter-spacing:0.02em;
+  }
+
+  .top5-card{
+    background: var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+    display:grid; grid-template-columns: 1fr 1fr; gap:0 28px;
+  }
+  @media (max-width:560px){ .top5-card{ grid-template-columns:1fr; } }
+  .top5-col h3{ font-size:1rem; display:flex; align-items:center; gap:8px; }
+  .top5-col h3 .n{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--paper-raised); background:var(--err); border-radius:5px; padding:2px 6px; }
+  .top5-col.after h3 .n{ background:var(--accent); }
+  .top5-col ol{ margin: 12px 0 0; padding-left: 20px; font-size: 13.6px; color: var(--ink-soft); }
+  .top5-col li{ margin-bottom:9px; }
+  .top5-col li b{ color:var(--ink); font-weight:600; }
+  .top5-col + .top5-col{ border-left:1px solid var(--line-soft); padding-left:28px; }
+  @media (max-width:560px){ .top5-col + .top5-col{ border-left:none; padding-left:0; border-top:1px solid var(--line-soft); padding-top:16px; margin-top:4px; } }
+
+  .method-note{
+    max-width:920px; margin: 22px auto 0; padding: 14px 18px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-tint);
+    border-radius: 0 10px 10px 0;
+    font-size: 13.2px; color: var(--ink-soft);
+  }
+  .method-note b{ color: var(--ink); }
+
+  /* ── TOC nav ────────────────────────────────────────────── */
+  .toc{
+    max-width:920px; margin: 34px auto 0; padding: 0 24px;
+    display:flex; flex-wrap:wrap; gap:8px;
+  }
+  .toc a{
+    text-decoration:none;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11.5px; font-weight:500;
+    color: var(--ink-soft);
+    background: var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:7px 10px;
+    display:flex; align-items:center; gap:6px;
+    transition: border-color .15s, color .15s;
+  }
+  .toc a:hover{ border-color: var(--accent); color: var(--accent-ink); }
+  .toc a .dot{ width:6px;height:6px;border-radius:50%; }
+
+  /* ── Module sections ────────────────────────────────────── */
+  .modules{ padding-top: 40px; }
+  .module{
+    scroll-margin-top: 20px;
+    background: var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius: 16px;
+    padding: 26px 28px 22px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+  .module-head{ display:flex; align-items:baseline; gap:12px; margin-bottom:4px; flex-wrap:wrap; }
+  .module-num{ font-family:'IBM Plex Mono',monospace; color: var(--accent); font-size:13px; font-weight:600; }
+  .module h2{ font-size:1.35rem; }
+  .module-score{
+    margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px;
+    color: var(--ink-soft); letter-spacing:0.04em;
+  }
+  .module-note{ color:var(--ink-soft); font-size:13.4px; margin: 6px 0 18px; max-width:68ch; }
+
+  .check-row{
+    display:grid; grid-template-columns: 30px 1fr; gap: 4px 12px;
+    padding: 12px 4px;
+    border-top: 1px solid var(--line-soft);
+  }
+  .check-row:first-of-type{ border-top:none; }
+  .status{
+    width:26px; height:26px; border-radius:8px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:14px; margin-top:1px;
+  }
+  .status--ok{ background:var(--ok-tint); color:var(--ok); }
+  .status--warn{ background:var(--warn-tint); color:var(--warn); }
+  .status--err{ background:var(--err-tint); color:var(--err); }
+  .check-q{ margin:0; font-weight:600; font-size:14.5px; }
+  .check-a{ margin:3px 0 0; color:var(--ink-soft); font-size:13.6px; line-height:1.55; }
+  .check-a code{ font-family:'IBM Plex Mono',monospace; font-size:12px; background:var(--paper); border:1px solid var(--line); padding:1px 5px; border-radius:5px; color:var(--ink); }
+
+  /* ── Closing ────────────────────────────────────────────── */
+  .closing{
+    background: var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding: 30px 28px;
+    box-shadow: var(--shadow);
+    text-align:center;
+  }
+  .closing .rating-big{ font-family:'Newsreader',serif; font-size:4rem; font-weight:600; color:var(--accent-ink); line-height:1; }
+  .closing .rating-big span{ font-size:1.4rem; color:var(--ink-soft); }
+  .closing .verdict-line{ margin-top:10px; font-size:1.05rem; font-weight:600; }
+  .closing p.detail{ margin: 10px auto 0; max-width:56ch; color:var(--ink-soft); font-size:13.8px; }
+
+  footer.sig{ text-align:center; margin-top:28px; color:var(--ink-soft); font-size:12px; font-family:'IBM Plex Mono',monospace; }
+</style>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Auditoría técnica · Pre-presentación al cliente</p>
+    <h1 class="title">Sistema Centryx</h1>
+    <p class="subtitle">Revisión exhaustiva de código de los 12 módulos del sistema — backend (FastAPI) y frontend (React) — antes de la demo al cliente.</p>
+    <div class="meta-row">
+      <span><b>Fecha:</b> 18 de agosto de 2026</span>
+      <span><b>Alcance:</b> Ventas, Cobranzas, Gastos, Pagos, Préstamos, Garantías, Flujo de Caja, Dashboard, Clientes/Proveedores, Configuración, Navegación, UX</span>
+    </div>
+  </div>
+</header>
+
+<section class="summary">
+  <div class="summary-grid">
+    <div class="verdict-card">
+      <p class="rating-label">Calificación general</p>
+      <p class="rating">9<span>/10</span></p>
+      <span class="verdict-badge">✅ Listo con condiciones</span>
+    </div>
+    <div class="top5-card">
+      <div class="top5-col">
+        <h3><span class="n">5</span> Antes de presentar</h3>
+        <ol>
+          <li><b>Favicon ausente</b> — la pestaña del navegador no muestra el ícono de Centryx.</li>
+          <li><b>console.log de depuración</b> — expone el JSON del comprobante en la consola al imprimir.</li>
+          <li><b>Placeholder del login</b> — confirmar que <code class="mono">usuario@electropro.pe</code> corresponde al cliente que verá la demo.</li>
+          <li><b>Probar la consulta RUC de SUNAT</b> la misma mañana — depende de una API gratuita de terceros sin llave.</li>
+          <li><b>Smoke test en vivo</b> — esta auditoría fue 100% de código; falta clickear cada módulo en el entorno real de la demo.</li>
+        </ol>
+      </div>
+      <div class="top5-col after">
+        <h3><span class="n">5</span> Mejoras para después</h3>
+        <ol>
+          <li><b>Eliminar <code class="mono">facturas.py</code></b> — router antiguo que ya no se usa (superado por Comprobantes).</li>
+          <li><b>Sincronizar el depósito de Garantías</b> con Flujo de Caja — hoy solo las devoluciones se concilian automáticamente.</li>
+          <li><b>Aclarar el alcance de "moneda dinámica"</b> — hoy solo cambia el símbolo en el Dashboard, no en el resto del sistema.</li>
+          <li><b>Respaldo para la consulta RUC</b> — cachear o tener un plan B si la API gratuita de SUNAT falla.</li>
+          <li><b>Dar más visibilidad a Garantías</b> en la navegación — hoy vive escondida como pestaña dentro de Cobranza.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <p class="method-note">
+    <b>Metodología:</b> auditoría de código fuente (routers de FastAPI, servicios, modelos y componentes React de los 12 módulos, ~15&nbsp;000 líneas revisadas), no una ejecución en vivo de la app. Los veredictos ✅ se basan en lógica y validaciones correctas en el código; se recomienda un recorrido real antes de la demo (punto 5 de la lista de la izquierda).
+  </p>
+</section>
+
+<nav class="toc">
+  <a href="#m1"><span class="dot" style="background:var(--ok)"></span>1 · Ventas</a>
+  <a href="#m2"><span class="dot" style="background:var(--ok)"></span>2 · Cobranzas</a>
+  <a href="#m3"><span class="dot" style="background:var(--ok)"></span>3 · Gastos</a>
+  <a href="#m4"><span class="dot" style="background:var(--ok)"></span>4 · Pagos</a>
+  <a href="#m5"><span class="dot" style="background:var(--ok)"></span>5 · Préstamos</a>
+  <a href="#m6"><span class="dot" style="background:var(--warn)"></span>6 · Garantías</a>
+  <a href="#m7"><span class="dot" style="background:var(--ok)"></span>7 · Flujo de Caja</a>
+  <a href="#m8"><span class="dot" style="background:var(--ok)"></span>8 · Dashboard</a>
+  <a href="#m9"><span class="dot" style="background:var(--ok)"></span>9 · Clientes/Proveedores</a>
+  <a href="#m10"><span class="dot" style="background:var(--ok)"></span>10 · Configuración</a>
+  <a href="#m11"><span class="dot" style="background:var(--warn)"></span>11 · Sidebar</a>
+  <a href="#m12"><span class="dot" style="background:var(--warn)"></span>12 · UX</a>
+</nav>
+
+<div class="wrap modules">
+
+  <section class="module" id="m1">
+    <div class="module-head"><span class="module-num">01</span><h2>Módulo Ventas</h2><span class="module-score">7/7 OK</span></div>
+    <p class="module-note">Revisado: <code>comprobantes.py</code> (2000 líneas), <code>FormComprobante.jsx</code>, <code>ModalImportarPdf.jsx</code>, <code>CargaMasiva.jsx</code>, plantilla de impresión.</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Crear comprobante funciona sin errores?</p><p class="check-a">Sí. Valida RUC/DNI, calcula IGV automáticamente, vincula o crea el cliente por RUC, y genera correlativos automáticos para Anticipo/Recibo Interno.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Importar PDF funciona?</p><p class="check-a">Sí. Extrae tipo, número, RUC, montos y fechas por patrones de texto SUNAT, con puntaje de confianza y campos "· verificar" resaltados en ámbar para revisión manual.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Importar ZIP funciona?</p><p class="check-a">Sí. Hasta 100 PDFs / 50&nbsp;MB, valida que el RUC emisor sea el de la empresa y que el cliente ya exista, permite editar filas "revisar" antes de confirmar.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿NC y ND tienen los 3 escenarios?</p><p class="check-a">Sí, los 6 en total. NC: anulación simple, devolución de cobro, descuento parcial. ND: cargo adicional, interés por mora, penalidad. Cada uno con su lógica de reversión al editar o eliminar el documento.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Selector de facturas al ingresar RUC?</p><p class="check-a">Sí. Al escribir el RUC en una Nota de Crédito/Débito, el selector "Documento Relacionado" se llena solo con las facturas activas de ese cliente.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Envío por correo adjunta PDF?</p><p class="check-a">Sí. Adjunta el PDF original importado si existe; si no, genera uno desde la plantilla del sistema.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Plantilla imprimible se ve profesional?</p><p class="check-a">Sí. Formato A4 con logo/color de marca dinámico, QR, cuentas bancarias, monto en letras y firma — nivel de un comprobante SUNAT real.</p></div></div>
+
+    <div class="check-row"><span class="status status--warn">⚠️</span><div><p class="check-q">Detalle menor</p><p class="check-a">Queda un <code>console.log('Datos recibidos para imprimir:', data)</code> en <code>PlantillaComprobante.jsx</code> que expone el JSON del comprobante en la consola del navegador al imprimir. Y <code>facturas.py</code> es un router anterior que ya no está registrado en <code>main.py</code> (código muerto, invisible al usuario, pero conviene borrarlo).</p></div></div>
+  </section>
+
+  <section class="module" id="m2">
+    <div class="module-head"><span class="module-num">02</span><h2>Módulo Cobranzas</h2><span class="module-score">5/5 OK</span></div>
+    <p class="module-note">Revisado: <code>cobranza.py</code>, <code>garantias.py</code>, <code>ordenes_cobro.py</code>, <code>Cobranza.jsx</code>.</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Registrar cobro funciona?</p><p class="check-a">Sí, con tolerancia de redondeo de S/&nbsp;5 (registra la diferencia como "ganancia" o "pérdida" de redondeo) y actualización automática de estado (Pendiente / Pago Parcial / Pagada).</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Lista de Cobros muestra correctamente?</p><p class="check-a">Sí. Fusiona en una sola vista cronológica los cobros individuales, las Órdenes de Cobro y las garantías retenidas.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Órdenes de Cobro funcionan?</p><p class="check-a">Sí. Permite seleccionar varios documentos pendientes de distintos clientes, cobrarlos en un solo registro y descargar el PDF de la orden.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Garantías: crear/devolver/ejecutar?</p><p class="check-a">Los 3 flujos están completos y son reversibles (ver detalle en el módulo Garantías más abajo).</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Morosidad por cliente funciona?</p><p class="check-a">Sí. Agrupa la deuda por cliente con semáforo verde/amarillo/rojo y días de mora máximos, ordenado de mayor a menor deuda.</p></div></div>
+  </section>
+
+  <section class="module" id="m3">
+    <div class="module-head"><span class="module-num">03</span><h2>Módulo Gastos</h2><span class="module-score">4/4 OK</span></div>
+    <p class="module-note">Revisado: <code>gastos.py</code> (endpoints completos), <code>proveedores_gastos.py</code>, wiring de <code>Gastos.jsx</code>.</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Crear gasto funciona?</p><p class="check-a">Sí. Mismo nivel de validación que Ventas: cálculo de IGV, correlativos, y vínculo a proveedor por documento.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Importar PDF funciona?</p><p class="check-a">Sí. Endpoints <code>/gastos/importar-pdf</code> e <code>/importar-zip</code> con el mismo patrón de extracción y confianza que Ventas.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Cuentas por Pagar muestra correcto?</p><p class="check-a">Sí. Endpoint dedicado con resumen de KPIs y exportación a Excel, filtrado por proveedor/estado/vencimiento.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Filtros funcionan?</p><p class="check-a">Sí, confirmados en el código de la tabla y en las llamadas al backend (búsqueda, categoría, área, rango de fechas, estado de pago).</p></div></div>
+  </section>
+
+  <section class="module" id="m4">
+    <div class="module-head"><span class="module-num">04</span><h2>Módulo Pagos</h2><span class="module-score">4/4 OK</span></div>
+    <p class="module-note">Revisado: <code>ordenes_pago.py</code>, <code>detracciones.py</code>, wiring de <code>Pagos.jsx</code> y <code>ModalDetalleLoteDetraccion.jsx</code>.</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Lista de Pagos muestra correctamente?</p><p class="check-a">Sí. Fusiona pagos de gastos, lotes de detracción, órdenes de pago y cuotas de préstamo pagadas en una sola vista.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Órdenes de Pago funcionan?</p><p class="check-a">Sí, mismo patrón que Órdenes de Cobro: selección de documentos pendientes, PDF descargable.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Pagos Tributarios/Detracciones?</p><p class="check-a">Sí. Endpoints de pendientes, KPIs, lotes (crear/agregar gastos/marcar pagado) y exportación completos.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Generador TXT funciona?</p><p class="check-a">Sí. <code>/detracciones/generar-txt</code> y <code>/lotes/{id}/generar-txt</code>, conectados desde el detalle del lote.</p></div></div>
+  </section>
+
+  <section class="module" id="m5">
+    <div class="module-head"><span class="module-num">05</span><h2>Módulo Préstamos</h2><span class="module-score">4/4 OK</span></div>
+    <p class="module-note">Revisado: <code>prestamos.py</code> completo (1140 líneas).</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Crear préstamo con cronograma?</p><p class="check-a">Sí. Calcula amortización fija o sistema francés, con las 5 tasas peruanas usuales (TEM/TEA/TNA/TNM/TCEA) convertidas a tasa mensual.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Importar PDF cronograma BCP?</p><p class="check-a">Sí. Parser específico para el formato de cronograma del BCP (fechas, saldo, amortización, interés, seguros, comisiones por fila).</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Pagar cuota funciona?</p><p class="check-a">Sí, con 2 caminos: pago libre y pago de una fila específica del cronograma importado. Ambos actualizan el saldo del préstamo.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Se refleja en Lista de Pagos?</p><p class="check-a">Sí, vía un registro de pago con tipo <code>pago_cuota_prestamo</code>, visible en <code>/gastos/pagos</code>.</p></div></div>
+  </section>
+
+  <section class="module" id="m6">
+    <div class="module-head"><span class="module-num">06</span><h2>Módulo Garantías</h2><span class="module-score">3/4 OK · 1 con matiz</span></div>
+    <p class="module-note">Vive como pestaña dentro de Cobranza (<code>GarantiasTab.jsx</code>), no como ítem propio del sidebar. Revisado: <code>garantias.py</code> completo (889 líneas).</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Crear garantía con método de cobro?</p><p class="check-a">Sí. Exige cuenta bancaria si el método es Transferencia o Cheque; genera correlativo <code>GAR-00001</code> propio para Recibo Interno.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Devolución parcial funciona?</p><p class="check-a">Sí. El saldo pendiente se reduce con cada devolución y el estado pasa a "devolución_parcial" hasta agotarse.</p></div></div>
+    <div class="check-row"><span class="status status--warn">⚠️</span><div><p class="check-q">¿Ejecución genera ingreso?</p><p class="check-a">Con matiz: "ejecutar" no crea dinero nuevo — reclasifica el depósito ya retenido como cobro de una factura/recibo, o como crédito a favor del cliente. Es lo contablemente correcto, pero conviene explicarlo así frente al cliente para que "ejecutar" no se lea como "genera un ingreso nuevo".</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Se refleja en Lista de Cobros?</p><p class="check-a">Sí. La garantía retenida aparece como "GARANTÍA RETENIDA" y, si se ejecuta contra una factura, también aparece el cobro resultante.</p></div></div>
+
+    <div class="check-row"><span class="status status--warn">⚠️</span><div><p class="check-q">Hallazgo adicional</p><p class="check-a">El depósito inicial de una garantía retenida <b>no</b> genera un movimiento en la bitácora de Flujo de Caja ni una referencia para conciliación automática — solo las devoluciones sí se sincronizan. Al conciliar el banco, el ingreso de una garantía nueva no va a calzar solo; habrá que registrarlo a mano con "Registrar en sistema". No es un error, pero conviene saberlo antes de la demo de conciliación.</p></div></div>
+  </section>
+
+  <section class="module" id="m7">
+    <div class="module-head"><span class="module-num">07</span><h2>Flujo de Caja</h2><span class="module-score">4/4 OK</span></div>
+    <p class="module-note">Revisado: <code>flujo_caja.py</code> completo (1953 líneas, 24 endpoints), wiring de <code>FlujoCaja.jsx</code>.</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Conciliación bancaria funciona?</p><p class="check-a">Sí. Flujo completo: importar extracto, previsualizar, confirmar, conciliar/desconciliar movimientos, registrar gastos bancarios detectados.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Importar PDF BCP funciona?</p><p class="check-a">Sí, endpoint <code>/conciliacion/importar-pdf</code> dedicado, además de la plantilla Excel descargable.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Actualizar conciliación funciona?</p><p class="check-a">Sí, <code>/conciliacion/{id}/actualizar</code> conectado desde el frontend.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Exportar Excel conciliados funciona?</p><p class="check-a">Sí, <code>/conciliacion/{id}/exportar-conciliados</code> conectado y confirmado en el código de la página.</p></div></div>
+  </section>
+
+  <section class="module" id="m8">
+    <div class="module-head"><span class="module-num">08</span><h2>Dashboard</h2><span class="module-score">2/3 OK · 1 con matiz</span></div>
+    <p class="module-note">Revisado: <code>dashboard.py</code>, <code>Dashboard.jsx</code>, <code>ServerStatusContext.jsx</code>, <code>Header.jsx</code>.</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿KPIs muestran datos correctos?</p><p class="check-a">La lógica de cálculo se apoya en los mismos módulos ya validados (ventas, cobranza, gastos); el rango de fechas se maneja explícitamente con filtros por cliente/servicio.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Avisa cuando no hay conexión?</p><p class="check-a">Sí, y muy bien resuelto: un indicador "En línea / Sin conexión" permanente en el header (con instrucciones de cómo levantar el backend) + un banner específico en el Dashboard cuando cae a datos de ejemplo, con botón "Reintentar".</p></div></div>
+    <div class="check-row"><span class="status status--warn">⚠️</span><div><p class="check-q">¿Moneda dinámica funciona?</p><p class="check-a">Parcialmente. El símbolo configurado en Configuración → Empresa cambia las tarjetas de KPI, Top Clientes y Proyectos del Dashboard. El resto del sistema (Ventas, Gastos, Cobranza…) sigue siempre en Soles, con USD opcional por comprobante — que es lo correcto para SUNAT, pero conviene aclarar que "dinámica" aplica solo al Dashboard.</p></div></div>
+  </section>
+
+  <section class="module" id="m9">
+    <div class="module-head"><span class="module-num">09</span><h2>Clientes y Proveedores</h2><span class="module-score">3/3 OK</span></div>
+    <p class="module-note">Revisado: <code>clientes.py</code>, <code>proveedores.py</code>, <code>utils.py</code> (consulta SUNAT).</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Crear cliente/proveedor funciona?</p><p class="check-a">Sí, con validación de documento duplicado en ambos.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Autocompletado RUC SUNAT funciona?</p><p class="check-a">Sí, para clientes y proveedores. <span style="color:var(--warn)">Riesgo a vigilar:</span> depende de una API gratuita de terceros (<code>api.apis.net.pe</code>) sin llave — el manejo de error es correcto (mensaje claro + carga manual como respaldo), pero conviene probarla la mañana de la demo por si está caída o lenta.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Estado de cuenta PDF funciona?</p><p class="check-a">Sí, con descarga directa y envío por correo, resumen de saldo incluido.</p></div></div>
+  </section>
+
+  <section class="module" id="m10">
+    <div class="module-head"><span class="module-num">10</span><h2>Configuración</h2><span class="module-score">3/3 OK</span></div>
+    <p class="module-note">Revisado: <code>configuracion.py</code> completo (688 líneas).</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Logo de empresa se sube correctamente?</p><p class="check-a">Sí (PNG/JPG/WEBP/SVG, máx. 2&nbsp;MB) y se refleja en el sidebar y en los PDFs impresos.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Datos empresa se guardan?</p><p class="check-a">Sí, incluida la configuración SMTP con botón de "Probar conexión" y contraseña enmascarada (nunca se borra al dejar el campo vacío).</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Documentos y correlativos funcionan?</p><p class="check-a">Sí, 10 tipos de documento con prefijo y próximo número editables.</p></div></div>
+  </section>
+
+  <section class="module" id="m11">
+    <div class="module-head"><span class="module-num">11</span><h2>Sidebar y Navegación</h2><span class="module-score">2/3 OK · 1 aviso</span></div>
+    <p class="module-note">Revisado: <code>Sidebar.jsx</code>, <code>main.py</code> (registro de routers).</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Orden correcto de módulos?</p><p class="check-a">Sí, y es deliberado (hay un comentario explícito en el código): Dashboard → Clientes → Proveedores → Ventas → Cobranza → Gastos → Pagos → Préstamos → Flujo de Caja → Indicadores → Reportes → Configuración — pensado para que un usuario nuevo entienda primero "a quién le vendo/compro".</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Todos los módulos cargan sin error?</p><p class="check-a">A nivel de código, sí — los 12 módulos están registrados y sus componentes no tienen dependencias rotas visibles. No se verificó con la app corriendo (ver nota de metodología).</p></div></div>
+    <div class="check-row"><span class="status status--warn">⚠️</span><div><p class="check-q">¿Nombre "Centryx" aparece en todas partes?</p><p class="check-a">Sí — pestaña del navegador, login, sidebar, pie de los comprobantes impresos y correos. Único hueco: no hay <code>favicon.ico</code> en <code>frontend/public</code>, así que la pestaña del navegador no muestra ningún ícono de marca.</p></div></div>
+  </section>
+
+  <section class="module" id="m12">
+    <div class="module-head"><span class="module-num">12</span><h2>Posibles mejoras de UX</h2></div>
+    <p class="module-note">Impresión general tras revisar ~25 formularios y modales.</p>
+
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Hay algo confuso para un usuario nuevo?</p><p class="check-a">En general no — los formularios largos (p. ej. Comprobante, Préstamo) usan secciones numeradas con un solo campo obligatorio a la vez, y "Garantías" avisa dentro de Cobranza en vez de sorprender en otro lado. Único punto de confusión real: la palabra "Ejecutar" en Garantías (ver módulo 6).</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Hay campos sin etiqueta?</p><p class="check-a">No se encontraron. Todos los campos revisados usan un componente <code>&lt;Label&gt;</code> consistente, con asterisco rojo en los obligatorios.</p></div></div>
+    <div class="check-row"><span class="status status--ok">✅</span><div><p class="check-q">¿Hay mensajes de error poco claros?</p><p class="check-a">No — los mensajes del backend son específicos ("El monto (120.00) supera el saldo pendiente (95.50)") en vez de genéricos, y el frontend reemplazó <code>alert()</code>/<code>confirm()</code> nativos por Toasts y diálogos propios en todo el sistema.</p></div></div>
+    <div class="check-row"><span class="status status--warn">⚠️</span><div><p class="check-q">¿Hay procesos que se pueden simplificar?</p><p class="check-a">Dos cosas menores: (1) el placeholder del login <code>usuario@electropro.pe</code> — vale confirmar que corresponde al cliente correcto antes de mostrarlo; (2) Garantías podría ganar más visibilidad en la navegación en vez de vivir solo como pestaña de Cobranza.</p></div></div>
+  </section>
+
+</div>
+
+<div class="wrap">
+  <div class="closing">
+    <p class="rating-big">9<span>/10</span></p>
+    <p class="verdict-line">✅ Listo para presentar — con condiciones</p>
+    <p class="detail">El sistema está funcionalmente completo y con un nivel de robustez (validaciones, reversión de operaciones, trazabilidad de auditoría) por encima del promedio para esta etapa. Antes de la demo: quitar el <code class="mono">console.log</code>, agregar un favicon, confirmar el placeholder de login, probar la API de SUNAT y hacer un recorrido real por los 12 módulos en el entorno de la presentación.</p>
+  </div>
+  <footer class="sig">Auditoría de código — Centryx · 18/08/2026</footer>
+</div>

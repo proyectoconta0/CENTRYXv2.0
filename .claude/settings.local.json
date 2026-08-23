@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm start *)",
+      "PowerShell(New-Item *)",
+      "PowerShell(cd \"D:\\\\CENTRYX\\\\frontend\"; $env:BROWSER=\"none\"; npx react-scripts start)",
+      "PowerShell(Get-ChildItem -Path \"D:\\\\CENTRYX\\\\frontend\\\\src\" -Recurse | Where-Object {$_.Extension -match '\\\\.\\(jsx?|tsx?\\)$'} | Select-Object FullName)",
+      "PowerShell(ls *)",
+      "PowerShell(cd \"D:\\\\CENTRYX\\\\backend\"; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'cd \"D:\\\\CENTRYX\\\\backend\"; uvicorn main:app --reload --port 8000' -WindowStyle Normal)",
+      "PowerShell(cd \"D:\\\\CENTRYX\\\\frontend\"; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'cd \"D:\\\\CENTRYX\\\\frontend\"; npm start' -WindowStyle Normal)",
+      "PowerShell(try { $r = Invoke-WebRequest \"http://localhost:8000/\" -TimeoutSec 3 -UseBasicParsing; $r.StatusCode } catch { \"Backend no responde: $_\" })",
+      "PowerShell(cd \"D:\\\\CENTRYX\\\\frontend\"; Start-Process powershell -ArgumentList '-NoExit','-Command','cd \"D:\\\\CENTRYX\\\\frontend\"; npm start' -WindowStyle Normal; \"Frontend iniciando en segundo plano...\")",
+      "PowerShell(try { $r = Invoke-WebRequest \"http://localhost:8000/api/clientes?per_page=1\" -UseBasicParsing -TimeoutSec 5; $r.Content } catch { \"ERROR: $_\" })",
+      "PowerShell(try { $r = Invoke-WebRequest \"http://localhost:8000/api/clientes/1/historial\" -UseBasicParsing -TimeoutSec 5; $r.Content } catch { \"ERROR: $_\" })",
+      "PowerShell(cd \"D:\\\\CENTRYX\\\\backend\"; Start-Process -NoNewWindow powershell -ArgumentList '-Command', 'cd \"D:\\\\CENTRYX\\\\backend\"; uvicorn main:app --reload --port 8000 > backend.log 2>&1')",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(netstat *)",
+      "PowerShell(cd \"D:\\\\CENTRYX\\\\frontend\"; $env:DANGEROUSLY_DISABLE_HOST_CHECK=\"true\"; npx react-scripts start)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(psql *)",
+      "PowerShell(curl -s -o $null -w \"%{http_code}\" http://localhost:8000/docs)",
+      "PowerShell(\\(Invoke-WebRequest -Uri \"http://localhost:8000/docs\" -UseBasicParsing\\).StatusCode)",
+      "Skill(run)",
+      "PowerShell(Start-Process powershell -ArgumentList '-NoExit', '-Command', 'cd \"D:\\\\CENTRYX\\\\frontend\"; npm start' -WindowStyle Normal)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/\" -UseBasicParsing -TimeoutSec 3; \"Backend OK: $\\($r.StatusCode\\)\" } catch { \"Backend DOWN: $_\" })",
+      "PowerShell(Start-Sleep -Seconds 10; try { $r = Invoke-WebRequest \"http://localhost:3000\" -UseBasicParsing -TimeoutSec 8; \"Frontend OK: $\\($r.StatusCode\\) — $\\($r.Content.Length\\) bytes\" } catch { \"Frontend error: $\\($_.Exception.Message\\)\" })",
+      "PowerShell(cd \"D:\\\\CENTRYX\\\\frontend\"; $env:CI=\"false\"; npx react-scripts build 2>&1 | Select-Object -Last 50)",
+      "PowerShell(Start-Process powershell -ArgumentList '-NoProfile', '-Command', 'cd D:\\\\CENTRYX\\\\frontend; npm start 2>&1 | Tee-Object -FilePath D:\\\\CENTRYX\\\\frontend_log.txt' -WindowStyle Normal)",
+      "PowerShell(Start-Sleep -Seconds 8; $backend = try { \\(Invoke-WebRequest -Uri \"http://localhost:8000/docs\" -TimeoutSec 5 -UseBasicParsing\\).StatusCode } catch { \"ERROR: $_\" }; Write-Host \"Backend /docs: $backend\")",
+      "PowerShell($r = try { Invoke-WebRequest -Uri \"http://localhost:8000/api/comprobantes/exportar\" -TimeoutSec 10 -UseBasicParsing } catch { $_ }; if \\($r.StatusCode\\) { Write-Host \"Status: $\\($r.StatusCode\\)\"; Write-Host \"Content-Type: $\\($r.Headers['Content-Type']\\)\"; Write-Host \"Content-Disposition: $\\($r.Headers['Content-Disposition']\\)\"; Write-Host \"Bytes: $\\($r.Content.Length\\)\" } else { Write-Host \"ERROR: $\\($r.Exception.Message\\)\" }4)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Copy-Item *)",
+      "PowerShell(cd D:\\\\CENTRYX\\\\frontend; $env:CI=\"true\"; npx react-scripts build 2>&1 | Select-String -Pattern \"ModalBienvenida|error|Error|Failed\" | Select-Object -First 80)",
+      "PowerShell(python -c \"import starlette.responses, inspect; print\\(starlette.responses.__file__\\)\")",
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('D:/CENTRYX/backend/app/routers/cobranza.py', encoding='utf-8'\\).read\\(\\)\\); print\\('cobranza OK'\\)\")",
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('D:/CENTRYX/backend/app/services/reportes_service.py', encoding='utf-8'\\).read\\(\\)\\); print\\('reportes_service OK'\\)\")"
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+Documento: Orden de Servicio
+Cliente: Viva GyM SAC
+RUC: 20600116637
+Fecha: 2026-06-13
