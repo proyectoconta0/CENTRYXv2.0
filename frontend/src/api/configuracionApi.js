@@ -73,6 +73,15 @@ export const resetearOnboarding = () => API.post("/resetear-onboarding").then(r 
 // ── Sistema ──────────────────────────────────────────────────────────────────
 export const exportarData = () => API.get("/exportar-data", { responseType: "blob" }).then(r => r.data);
 
+// ── Backup y Restauración ──────────────────────────────────────────────────
+export const exportarBackup = () => API.get("/backup/exportar", { responseType: "blob" }).then(r => r.data);
+export const importarBackup = (file) => {
+  const fd = new FormData();
+  fd.append("archivo", file);
+  return API.post("/backup/importar", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+};
+export const limpiarRegistros = (confirmar) => API.delete("/backup/limpiar", { data: { confirmar } }).then(r => r.data);
+
 // ── Gastos: Categorías y Áreas (gestión dinámica) ─────────────────────────────
 export const getCategoriasGasto    = () => API.get("/categorias-gasto").then(r => r.data);
 export const crearCategoriaGasto   = (data) => API.post("/categorias-gasto", data).then(r => r.data);

@@ -7,6 +7,7 @@ import UsuariosTab from "../components/configuracion/UsuariosTab";
 import DocumentosTab from "../components/configuracion/DocumentosTab";
 import AlertasTab from "../components/configuracion/AlertasTab";
 import SistemaTab from "../components/configuracion/SistemaTab";
+import BackupTab from "../components/configuracion/BackupTab";
 
 const TABS = [
   { key: "empresa",    label: "Empresa" },
@@ -15,6 +16,7 @@ const TABS = [
   { key: "documentos", label: "Documentos" },
   { key: "alertas",    label: "Alertas" },
   { key: "sistema",    label: "Sistema" },
+  { key: "backup",     label: "Backup" },
 ];
 
 export default function Configuracion() {
@@ -49,6 +51,7 @@ export default function Configuracion() {
           {tab === "documentos" && <DocumentosTab />}
           {tab === "alertas" && <AlertasTab />}
           {tab === "sistema" && <SistemaTab />}
+          {tab === "backup" && <BackupTab />}
 
         </main>
       </div>

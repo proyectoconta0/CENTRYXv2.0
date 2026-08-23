@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from passlib.context import CryptContext
 from pydantic import BaseModel
@@ -16,9 +16,14 @@ from app.core.security import (
     RUBROS, ROLES_DISPONIBLES, get_current_usuario, require_administrador,
 )
 from app.models.configuracion import ConfiguracionAlerta, ConfiguracionDocumento, ConfiguracionEmpresa
-from app.models.models import Usuario, Cliente, Gasto, Proveedor, CategoriaGasto, AreaGasto
-from app.models.comercial import VentaComercial
+from app.models.models import (
+    Usuario, Cliente, Gasto, Proveedor, CategoriaGasto, AreaGasto,
+    PagoGasto, Prestamo, CuotaPrestamo, Garantia, PagoGarantia, MovimientoCaja,
+)
+from app.models.comercial import VentaComercial, PagoCobranza
+from app.models.flujo_caja import ConciliacionBancaria, MovimientoConciliacion
 from app.services.reportes_export import construir_excel
+from app.services.auditoria_service import registrar_log, ip_de
 
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -689,3 +694,220 @@ def desactivar_area_gasto(area_id: int, db: Session = Depends(get_db),
     target.activo = False
     db.commit()
     return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Backup y Restauración
+# ══════════════════════════════════════════════════════════════════════════
+
+BACKUP_VERSION = "1.0"
+
+
+def _serializar_registro(obj) -> dict:
+    """Todas las columnas propias del modelo (sin relaciones ni el
+    _sa_instance_state interno de SQLAlchemy que trae obj.__dict__)."""
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
+def _campos_validos(modelo, registro: dict) -> dict:
+    """Descarta del registro importado cualquier clave que ya no exista como
+    columna del modelo (por si el backup viene de una versión anterior)."""
+    columnas = modelo.__table__.columns.keys()
+    return {k: v for k, v in registro.items() if k in columnas}
+
+
+@router.get("/backup/exportar")
+def exportar_backup(http_request: Request, db: Session = Depends(get_db),
+                     usuario: Usuario = Depends(require_administrador)):
+    datos = {
+        "version": BACKUP_VERSION,
+        "fecha_exportacion": datetime.utcnow().isoformat(),
+        "exportado_por": usuario.nombre,
+        "datos": {
+            "clientes":                [_serializar_registro(c) for c in db.query(Cliente).filter(Cliente.activo == True).all()],
+            "proveedores":              [_serializar_registro(p) for p in db.query(Proveedor).filter(Proveedor.estado == "Activo").all()],
+            "ventas":                   [_serializar_registro(v) for v in db.query(VentaComercial).all()],
+            "gastos":                   [_serializar_registro(g) for g in db.query(Gasto).all()],
+            "pagos_cobranza":           [_serializar_registro(p) for p in db.query(PagoCobranza).all()],
+            "pagos_gastos":             [_serializar_registro(p) for p in db.query(PagoGasto).all()],
+            "prestamos":                [_serializar_registro(p) for p in db.query(Prestamo).all()],
+            "cuotas_prestamo":          [_serializar_registro(c) for c in db.query(CuotaPrestamo).all()],
+            "garantias":                [_serializar_registro(g) for g in db.query(Garantia).all()],
+            "flujo_caja":               [_serializar_registro(f) for f in db.query(MovimientoCaja).all()],
+            "conciliaciones":           [_serializar_registro(c) for c in db.query(ConciliacionBancaria).all()],
+            "movimientos_conciliacion": [_serializar_registro(m) for m in db.query(MovimientoConciliacion).all()],
+        },
+    }
+
+    fecha = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    nombre_archivo = f"centryx_backup_{fecha}.json"
+
+    registrar_log(
+        db, usuario.id, usuario.nombre, "configuracion", "Exportó backup",
+        "Descargó un backup completo de los registros del sistema", ip_de(http_request),
+    )
+
+    return Response(
+        content=json.dumps(datos, default=str, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"},
+    )
+
+
+@router.post("/backup/importar")
+async def importar_backup(http_request: Request, archivo: UploadFile = File(...), db: Session = Depends(get_db),
+                           usuario: Usuario = Depends(require_administrador)):
+    try:
+        contenido = json.loads(await archivo.read())
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(400, "El archivo no es un JSON válido")
+
+    if not isinstance(contenido, dict) or "datos" not in contenido or not isinstance(contenido["datos"], dict):
+        raise HTTPException(400, "Archivo de backup inválido: falta la clave 'datos'")
+
+    datos = contenido["datos"]
+    resumen = {}
+
+    # Se importa en orden que respeta las FK: clientes/proveedores antes de
+    # ventas/gastos, y esos antes de sus pagos — igual que en exportar_backup.
+    # Solo se insertan registros "nuevos" (según su clave natural); nunca se
+    # sobrescribe un registro ya existente.
+
+    # 1. Clientes (dedup por RUC)
+    if "clientes" in datos:
+        importados = 0
+        for c in datos["clientes"]:
+            existe = db.query(Cliente).filter(Cliente.ruc == c.get("ruc")).first() if c.get("ruc") else None
+            if not existe:
+                db.add(Cliente(**_campos_validos(Cliente, c)))
+                importados += 1
+        resumen["clientes"] = importados
+
+    # 2. Proveedores (dedup por N° de documento — Proveedor no tiene campo "ruc")
+    if "proveedores" in datos:
+        importados = 0
+        for p in datos["proveedores"]:
+            existe = db.query(Proveedor).filter(
+                Proveedor.numero_documento == p.get("numero_documento")
+            ).first() if p.get("numero_documento") else None
+            if not existe:
+                db.add(Proveedor(**_campos_validos(Proveedor, p)))
+                importados += 1
+        resumen["proveedores"] = importados
+
+    # 3. Ventas (dedup por N° de factura)
+    if "ventas" in datos:
+        importados = 0
+        for v in datos["ventas"]:
+            existe = db.query(VentaComercial).filter(
+                VentaComercial.numero_factura == v.get("numero_factura")
+            ).first() if v.get("numero_factura") else None
+            if not existe:
+                db.add(VentaComercial(**_campos_validos(VentaComercial, v)))
+                importados += 1
+        resumen["ventas"] = importados
+
+    # 4. Gastos (dedup por N° comprobante + N° documento)
+    if "gastos" in datos:
+        importados = 0
+        for g in datos["gastos"]:
+            existe = None
+            if g.get("numero_comprobante") or g.get("numero_documento"):
+                existe = db.query(Gasto).filter(
+                    Gasto.numero_comprobante == g.get("numero_comprobante"),
+                    Gasto.numero_documento == g.get("numero_documento"),
+                ).first()
+            if not existe:
+                db.add(Gasto(**_campos_validos(Gasto, g)))
+                importados += 1
+        resumen["gastos"] = importados
+
+    # 5. Pagos de cobranza — sin dedup propio (detalle de una venta ya importada)
+    if "pagos_cobranza" in datos:
+        for p in datos["pagos_cobranza"]:
+            db.add(PagoCobranza(**_campos_validos(PagoCobranza, p)))
+        resumen["pagos_cobranza"] = len(datos["pagos_cobranza"])
+
+    # 6. Pagos de gastos
+    if "pagos_gastos" in datos:
+        for p in datos["pagos_gastos"]:
+            db.add(PagoGasto(**_campos_validos(PagoGasto, p)))
+        resumen["pagos_gastos"] = len(datos["pagos_gastos"])
+
+    # 7. Préstamos y cuotas
+    if "prestamos" in datos:
+        for p in datos["prestamos"]:
+            db.add(Prestamo(**_campos_validos(Prestamo, p)))
+        resumen["prestamos"] = len(datos["prestamos"])
+
+    if "cuotas_prestamo" in datos:
+        for c in datos["cuotas_prestamo"]:
+            db.add(CuotaPrestamo(**_campos_validos(CuotaPrestamo, c)))
+        resumen["cuotas"] = len(datos["cuotas_prestamo"])
+
+    # 8. Garantías
+    if "garantias" in datos:
+        for g in datos["garantias"]:
+            db.add(Garantia(**_campos_validos(Garantia, g)))
+        resumen["garantias"] = len(datos["garantias"])
+
+    # 9. Flujo de caja
+    if "flujo_caja" in datos:
+        for f in datos["flujo_caja"]:
+            db.add(MovimientoCaja(**_campos_validos(MovimientoCaja, f)))
+        resumen["flujo_caja"] = len(datos["flujo_caja"])
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, f"No se pudo importar el backup: {e}")
+
+    registrar_log(
+        db, usuario.id, usuario.nombre, "configuracion", "Importó backup",
+        f"Importó backup: {resumen}", ip_de(http_request),
+    )
+
+    return {"mensaje": "Backup importado exitosamente", "resumen": resumen}
+
+
+class LimpiarRegistrosReq(BaseModel):
+    confirmar: str
+
+
+@router.delete("/backup/limpiar")
+def limpiar_registros(data: LimpiarRegistrosReq, http_request: Request, db: Session = Depends(get_db),
+                       usuario: Usuario = Depends(require_administrador)):
+    if data.confirmar != "ELIMINAR_TODO":
+        raise HTTPException(400, "Confirmación incorrecta")
+
+    # Orden inverso a las FK reales del modelo (no el orden de exportar_backup,
+    # que es de lectura): p.ej. PagoGarantia debe borrarse antes que Garantia,
+    # y CuotaPrestamo antes que Prestamo/MovimientoCaja (CuotaPrestamo.
+    # movimiento_caja_id referencia movimientos_caja).
+    try:
+        db.query(MovimientoConciliacion).delete()
+        db.query(ConciliacionBancaria).delete()
+        db.query(PagoGarantia).delete()
+        db.query(PagoCobranza).delete()
+        db.query(PagoGasto).delete()
+        db.query(Gasto).delete()
+        db.query(VentaComercial).delete()
+        db.query(CuotaPrestamo).delete()
+        db.query(Garantia).delete()
+        db.query(Proveedor).delete()
+        db.query(Cliente).delete()
+        db.query(Prestamo).delete()
+        db.query(MovimientoCaja).delete()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, f"No se pudo completar la eliminación: {e}")
+
+    registrar_log(
+        db, usuario.id, usuario.nombre, "configuracion", "Eliminó todos los registros",
+        "Eliminó todos los registros del sistema (ventas, gastos, clientes, proveedores, préstamos, "
+        "garantías y flujo de caja) desde Configuración → Backup", ip_de(http_request),
+    )
+
+    return {"mensaje": "Todos los registros eliminados correctamente"}
