@@ -709,11 +709,32 @@ def _serializar_registro(obj) -> dict:
     return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
 
 
+CAMPOS_EXCLUIDOS_IMPORT = {"id", "_sa_instance_state"}
+
+
 def _campos_validos(modelo, registro: dict) -> dict:
-    """Descarta del registro importado cualquier clave que ya no exista como
-    columna del modelo (por si el backup viene de una versión anterior)."""
+    """Campos del registro importado que son columnas reales del modelo,
+    sin "id" (la BD genera uno nuevo — importar no debe reutilizar el id
+    del backup, que puede chocar con un registro ya existente) ni
+    "_sa_instance_state" (nunca debería venir en un JSON, pero por si el
+    archivo fue editado a mano)."""
     columnas = modelo.__table__.columns.keys()
-    return {k: v for k, v in registro.items() if k in columnas}
+    return {k: v for k, v in registro.items() if k in columnas and k not in CAMPOS_EXCLUIDOS_IMPORT}
+
+
+def _insertar_con_savepoint(db: Session, instancia) -> bool:
+    """Inserta una fila dentro de su propio SAVEPOINT: si falla (tipo de
+    dato inválido, FK inexistente, constraint, etc.) solo se deshace esa
+    fila — no arrastra al rollback las filas ya insertadas en esta misma
+    importación (que todavía no tienen commit). Requiere Postgres (soporta
+    SAVEPOINT vía Session.begin_nested()), el motor de este proyecto."""
+    try:
+        with db.begin_nested():
+            db.add(instancia)
+            db.flush()
+        return True
+    except Exception:
+        return False
 
 
 @router.get("/backup/exportar")
@@ -771,91 +792,194 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
     # Se importa en orden que respeta las FK: clientes/proveedores antes de
     # ventas/gastos, y esos antes de sus pagos — igual que en exportar_backup.
     # Solo se insertan registros "nuevos" (según su clave natural); nunca se
-    # sobrescribe un registro ya existente.
+    # sobrescribe un registro ya existente. Cada fila se inserta en su propio
+    # SAVEPOINT (_insertar_con_savepoint): si una fila falla, se descarta
+    # solo esa fila y se sigue con las demás — no se aborta todo el import.
+    #
+    # El "id" del backup NUNCA se reutiliza (la BD genera uno nuevo), así que
+    # los campos que son FK hacia OTRA tabla de este mismo backup (p.ej.
+    # pagos_cobranza.comprobante_id -> ventas) se remapean del id viejo al id
+    # nuevo con los mapa_* construidos abajo, o se descartan si no se puede
+    # resolver (mejor perder un vínculo secundario que insertar una fila con
+    # una FK que apunta a otro registro por coincidencia de número).
 
     # 1. Clientes (dedup por RUC)
+    mapa_clientes = {}
     if "clientes" in datos:
         importados = 0
         for c in datos["clientes"]:
+            old_id = c.get("id")
             existe = db.query(Cliente).filter(Cliente.ruc == c.get("ruc")).first() if c.get("ruc") else None
-            if not existe:
-                db.add(Cliente(**_campos_validos(Cliente, c)))
+            if existe:
+                if old_id is not None:
+                    mapa_clientes[old_id] = existe.id
+                continue
+            nuevo = Cliente(**_campos_validos(Cliente, c))
+            if _insertar_con_savepoint(db, nuevo):
                 importados += 1
+                if old_id is not None:
+                    mapa_clientes[old_id] = nuevo.id
         resumen["clientes"] = importados
 
     # 2. Proveedores (dedup por N° de documento — Proveedor no tiene campo "ruc")
+    mapa_proveedores = {}
     if "proveedores" in datos:
         importados = 0
         for p in datos["proveedores"]:
+            old_id = p.get("id")
             existe = db.query(Proveedor).filter(
                 Proveedor.numero_documento == p.get("numero_documento")
             ).first() if p.get("numero_documento") else None
-            if not existe:
-                db.add(Proveedor(**_campos_validos(Proveedor, p)))
+            if existe:
+                if old_id is not None:
+                    mapa_proveedores[old_id] = existe.id
+                continue
+            nuevo = Proveedor(**_campos_validos(Proveedor, p))
+            if _insertar_con_savepoint(db, nuevo):
                 importados += 1
+                if old_id is not None:
+                    mapa_proveedores[old_id] = nuevo.id
         resumen["proveedores"] = importados
 
     # 3. Ventas (dedup por N° de factura)
+    mapa_ventas = {}
     if "ventas" in datos:
         importados = 0
         for v in datos["ventas"]:
+            old_id = v.get("id")
             existe = db.query(VentaComercial).filter(
                 VentaComercial.numero_factura == v.get("numero_factura")
             ).first() if v.get("numero_factura") else None
-            if not existe:
-                db.add(VentaComercial(**_campos_validos(VentaComercial, v)))
+            if existe:
+                if old_id is not None:
+                    mapa_ventas[old_id] = existe.id
+                continue
+            campos = _campos_validos(VentaComercial, v)
+            if campos.get("cliente_id") is not None:
+                campos["cliente_id"] = mapa_clientes.get(campos["cliente_id"])
+            # Solo se puede resolver si la factura relacionada ya se importó
+            # antes en este mismo bucle (mejor esfuerzo, sin dos pasadas).
+            if campos.get("comprobante_relacionado_id") is not None:
+                campos["comprobante_relacionado_id"] = mapa_ventas.get(campos["comprobante_relacionado_id"])
+            nuevo = VentaComercial(**campos)
+            if _insertar_con_savepoint(db, nuevo):
                 importados += 1
+                if old_id is not None:
+                    mapa_ventas[old_id] = nuevo.id
         resumen["ventas"] = importados
 
     # 4. Gastos (dedup por N° comprobante + N° documento)
+    mapa_gastos = {}
     if "gastos" in datos:
         importados = 0
         for g in datos["gastos"]:
+            old_id = g.get("id")
             existe = None
             if g.get("numero_comprobante") or g.get("numero_documento"):
                 existe = db.query(Gasto).filter(
                     Gasto.numero_comprobante == g.get("numero_comprobante"),
                     Gasto.numero_documento == g.get("numero_documento"),
                 ).first()
-            if not existe:
-                db.add(Gasto(**_campos_validos(Gasto, g)))
+            if existe:
+                if old_id is not None:
+                    mapa_gastos[old_id] = existe.id
+                continue
+            campos = _campos_validos(Gasto, g)
+            if campos.get("proveedor_id") is not None:
+                campos["proveedor_id"] = mapa_proveedores.get(campos["proveedor_id"])
+            # cuota_prestamo_id apunta a cuotas_prestamo, que se importa más
+            # abajo (paso 8) — todavía no hay mapa para remapearlo, se
+            # descarta el vínculo en vez de dejar el id viejo.
+            if campos.get("cuota_prestamo_id") is not None:
+                campos["cuota_prestamo_id"] = None
+            nuevo = Gasto(**campos)
+            if _insertar_con_savepoint(db, nuevo):
                 importados += 1
+                if old_id is not None:
+                    mapa_gastos[old_id] = nuevo.id
         resumen["gastos"] = importados
 
-    # 5. Pagos de cobranza — sin dedup propio (detalle de una venta ya importada)
+    # 5. Pagos de cobranza — sin dedup propio (detalle de una venta ya
+    # importada); comprobante_id es NOT NULL, así que si la venta referenciada
+    # no se pudo resolver (no vino en el backup / no se importó) se descarta
+    # la fila en vez de insertar una FK inválida.
     if "pagos_cobranza" in datos:
+        importados = 0
         for p in datos["pagos_cobranza"]:
-            db.add(PagoCobranza(**_campos_validos(PagoCobranza, p)))
-        resumen["pagos_cobranza"] = len(datos["pagos_cobranza"])
+            campos = _campos_validos(PagoCobranza, p)
+            nuevo_comprobante_id = mapa_ventas.get(campos.get("comprobante_id"))
+            if nuevo_comprobante_id is None:
+                continue
+            campos["comprobante_id"] = nuevo_comprobante_id
+            nuevo = PagoCobranza(**campos)
+            if _insertar_con_savepoint(db, nuevo):
+                importados += 1
+        resumen["pagos_cobranza"] = importados
 
-    # 6. Pagos de gastos
+    # 6. Pagos de gastos (gasto_id es nullable — solo se remapea si viene con valor)
     if "pagos_gastos" in datos:
+        importados = 0
         for p in datos["pagos_gastos"]:
-            db.add(PagoGasto(**_campos_validos(PagoGasto, p)))
-        resumen["pagos_gastos"] = len(datos["pagos_gastos"])
+            campos = _campos_validos(PagoGasto, p)
+            if campos.get("gasto_id") is not None:
+                nuevo_gasto_id = mapa_gastos.get(campos["gasto_id"])
+                if nuevo_gasto_id is None:
+                    continue
+                campos["gasto_id"] = nuevo_gasto_id
+            nuevo = PagoGasto(**campos)
+            if _insertar_con_savepoint(db, nuevo):
+                importados += 1
+        resumen["pagos_gastos"] = importados
 
-    # 7. Préstamos y cuotas
+    # 7. Préstamos
+    mapa_prestamos = {}
     if "prestamos" in datos:
+        importados = 0
         for p in datos["prestamos"]:
-            db.add(Prestamo(**_campos_validos(Prestamo, p)))
-        resumen["prestamos"] = len(datos["prestamos"])
+            old_id = p.get("id")
+            nuevo = Prestamo(**_campos_validos(Prestamo, p))
+            if _insertar_con_savepoint(db, nuevo):
+                importados += 1
+                if old_id is not None:
+                    mapa_prestamos[old_id] = nuevo.id
+        resumen["prestamos"] = importados
 
+    # 8. Cuotas de préstamo — prestamo_id es obligatorio: si no se puede
+    # resolver, se descarta la fila (misma razón que pagos_cobranza arriba).
     if "cuotas_prestamo" in datos:
+        importados = 0
         for c in datos["cuotas_prestamo"]:
-            db.add(CuotaPrestamo(**_campos_validos(CuotaPrestamo, c)))
-        resumen["cuotas"] = len(datos["cuotas_prestamo"])
+            campos = _campos_validos(CuotaPrestamo, c)
+            nuevo_prestamo_id = mapa_prestamos.get(campos.get("prestamo_id"))
+            if nuevo_prestamo_id is None:
+                continue
+            campos["prestamo_id"] = nuevo_prestamo_id
+            # movimiento_caja_id apunta a flujo_caja, que se importa después
+            # (paso 9) — mismo caso que cuota_prestamo_id en gastos.
+            if campos.get("movimiento_caja_id") is not None:
+                campos["movimiento_caja_id"] = None
+            nuevo = CuotaPrestamo(**campos)
+            if _insertar_con_savepoint(db, nuevo):
+                importados += 1
+        resumen["cuotas_prestamo"] = importados
 
-    # 8. Garantías
+    # 9. Garantías
     if "garantias" in datos:
+        importados = 0
         for g in datos["garantias"]:
-            db.add(Garantia(**_campos_validos(Garantia, g)))
-        resumen["garantias"] = len(datos["garantias"])
+            nuevo = Garantia(**_campos_validos(Garantia, g))
+            if _insertar_con_savepoint(db, nuevo):
+                importados += 1
+        resumen["garantias"] = importados
 
-    # 9. Flujo de caja
+    # 10. Flujo de caja
     if "flujo_caja" in datos:
+        importados = 0
         for f in datos["flujo_caja"]:
-            db.add(MovimientoCaja(**_campos_validos(MovimientoCaja, f)))
-        resumen["flujo_caja"] = len(datos["flujo_caja"])
+            nuevo = MovimientoCaja(**_campos_validos(MovimientoCaja, f))
+            if _insertar_con_savepoint(db, nuevo):
+                importados += 1
+        resumen["flujo_caja"] = importados
 
     try:
         db.commit()

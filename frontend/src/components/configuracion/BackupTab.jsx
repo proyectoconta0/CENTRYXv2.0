@@ -15,7 +15,7 @@ const LABEL_RESUMEN = {
   pagos_cobranza: "Pagos de Cobranza",
   pagos_gastos:   "Pagos de Gastos",
   prestamos:      "Préstamos",
-  cuotas:         "Cuotas de Préstamo",
+  cuotas_prestamo: "Cuotas de Préstamo",
   garantias:      "Garantías",
   flujo_caja:     "Flujo de Caja",
 };
