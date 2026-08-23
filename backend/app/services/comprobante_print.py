@@ -91,7 +91,7 @@ def construir_payload_impresion(
     adelanto: Optional[float] = None,
     documento_relacionado: Optional[str] = None,
 ) -> dict:
-    empresa = get_empresa_header(db)
+    empresa = get_empresa_header(db, para_pdf=False)
     moneda = moneda or "PEN"
     forma_pago = (
         "CRÉDITO"

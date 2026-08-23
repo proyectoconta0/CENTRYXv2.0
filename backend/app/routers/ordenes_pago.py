@@ -288,7 +288,7 @@ def pdf_orden_pago(orden_id: int, db: Session = Depends(get_db)):
     orden = db.query(OrdenPago).filter(OrdenPago.id == orden_id).first()
     if not orden:
         raise HTTPException(404, "Orden de pago no encontrada")
-    empresa = get_empresa_header(db)
+    empresa = get_empresa_header(db, para_pdf=True)
     pdf_bytes = construir_pdf_orden_pago(empresa, orden)
     return Response(
         content=pdf_bytes,

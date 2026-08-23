@@ -8,6 +8,7 @@ import {
   updatePago, deletePago, exportarCobranza,
   eliminarOrdenCobro, getPagosCobranza, extornarPago, eliminarGarantia,
   getOrdenCobroPdf,
+  getMorosidadDetalle, enviarRecordatorioMorosidad,
 } from "../api/comercialApi";
 import { getClientes } from "../api/comercialApi";
 import ModalCrearOrdenCobro from "../components/cobranza/ModalCrearOrdenCobro";
@@ -168,6 +169,120 @@ function ModalDetalleCobro({ pago, onClose }) {
         </div>
         <div className="flex px-6 pb-6">
           <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Mismo criterio que _semaforo() en backend/app/routers/cobranza.py (el que
+// alimenta SemaforoIcon en la tabla principal de Cuentas por Cobrar / la
+// pestaña Morosidad por Cliente): <=0 días → verde, 1-15 → amarillo, >15 →
+// rojo. El detalle del modal reutiliza este mismo cálculo y SemaforoIcon
+// para que el color coincida exactamente con la tabla principal.
+function semaforoPorDiasVencido(dias) {
+  if (dias <= 0) return "verde";
+  if (dias <= 15) return "amarillo";
+  return "rojo";
+}
+
+// Mismas clases de texto que usa la columna "Días de Mora" en la pestaña
+// Morosidad por Cliente (ver más abajo, m.dias_mora_max).
+const TEXTO_DIAS_VENCIDO = { verde: "text-green-600", amarillo: "text-yellow-600", rojo: "text-red-600 font-medium" };
+
+function ModalDetalleMorosidad({ ruc, onClose, onEnviarRecordatorio, enviandoRecordatorio }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!ruc) return;
+    setLoading(true);
+    setError("");
+    getMorosidadDetalle(ruc)
+      .then(setData)
+      .catch(() => setError("No se pudo cargar el detalle de morosidad."))
+      .finally(() => setLoading(false));
+  }, [ruc]);
+
+  if (!ruc) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+        <div className="flex items-start justify-between p-6 border-b border-gray-200">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">
+              {data?.razon_social || "Cliente"} — Detalle de Morosidad
+            </h2>
+            <p className="text-sm text-gray-500 mt-0.5">{ruc}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 mt-0.5"><HiX className="w-5 h-5" /></button>
+        </div>
+
+        <div className="p-6 overflow-y-auto flex-1">
+          {loading ? (
+            <p className="text-center text-gray-400 text-sm py-12">Cargando…</p>
+          ) : error ? (
+            <p className="text-center text-red-500 text-sm py-12">{error}</p>
+          ) : !data?.facturas?.length ? (
+            <p className="text-center text-gray-400 text-sm py-12">Sin facturas vencidas para este cliente</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-3 py-2 text-left   text-xs font-semibold text-gray-500 uppercase">N° Factura</th>
+                    <th className="px-3 py-2 text-left   text-xs font-semibold text-gray-500 uppercase">Tipo</th>
+                    <th className="px-3 py-2 text-left   text-xs font-semibold text-gray-500 uppercase">F. Emisión</th>
+                    <th className="px-3 py-2 text-left   text-xs font-semibold text-gray-500 uppercase">Vencimiento</th>
+                    <th className="px-3 py-2 text-right  text-xs font-semibold text-gray-500 uppercase">Monto Total</th>
+                    <th className="px-3 py-2 text-right  text-xs font-semibold text-gray-500 uppercase">Saldo Pendiente</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase">Días Vencido</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase">🚦</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data.facturas.map((f, i) => {
+                    const sem = semaforoPorDiasVencido(f.dias_vencido);
+                    return (
+                      <tr key={i}>
+                        <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">{f.numero_factura || "—"}</td>
+                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{f.tipo_documento}</td>
+                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtFecha(f.fecha_emision)}</td>
+                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtFecha(f.fecha_vencimiento)}</td>
+                        <td className="px-3 py-2 text-right text-gray-700 whitespace-nowrap">{fmtS(f.monto_total)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-red-600 whitespace-nowrap">{fmtS(f.saldo_pendiente)}</td>
+                        <td className={`px-3 py-2 text-center whitespace-nowrap ${TEXTO_DIAS_VENCIDO[sem]}`}>{f.dias_vencido}</td>
+                        <td className="px-3 py-2 text-center"><div className="flex justify-center"><SemaforoIcon valor={sem} /></div></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {!loading && !error && data?.facturas?.length > 0 && (
+          <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between text-sm bg-gray-50">
+            <span className="font-semibold text-gray-700">
+              TOTAL DEUDA: <span className="text-red-600">{fmtS(data.total_deuda)}</span>
+            </span>
+            <span className="font-semibold text-gray-700">PROMEDIO: {data.dias_promedio} días</span>
+          </div>
+        )}
+
+        <div className="flex gap-3 px-6 pb-6 pt-3">
+          <button
+            onClick={() => onEnviarRecordatorio(ruc)}
+            disabled={enviandoRecordatorio || loading || !data?.facturas?.length}
+            className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            {enviandoRecordatorio ? "Enviando…" : "📧 Enviar recordatorio"}
+          </button>
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cerrar
+          </button>
         </div>
       </div>
     </div>
@@ -341,6 +456,10 @@ export default function Cobranza() {
 
   // Modal ver detalle de un cobro individual (Lista de Cobros)
   const [detalleCobroModal, setDetalleCobroModal] = useState(null); // el pago (fila de filasListaCobros)
+
+  // Modal detalle de morosidad por cliente (drill-down desde la tabla de la pestaña Morosidad)
+  const [morosidadRuc, setMorosidadRuc] = useState(null); // RUC del cliente con el modal abierto, o null
+  const [enviandoRecordatorio, setEnviandoRecordatorio] = useState(false);
 
   // Modal extornar pago
   const [extornarModal, setExtornarModal] = useState(null); // el pago (fila de filasListaCobros)
@@ -642,6 +761,18 @@ export default function Cobranza() {
   const limpiarFiltrosPagos = () => {
     setPfDesde(""); setPfHasta(""); setPfCliente(""); setPfMetodo("Todos");
     cargarPagosCobranza({ desde: "", hasta: "", cliente: "", metodo: "Todos" });
+  };
+
+  const handleEnviarRecordatorioMorosidad = async (ruc) => {
+    setEnviandoRecordatorio(true);
+    try {
+      const r = await enviarRecordatorioMorosidad(ruc);
+      setToast({ message: r?.mensaje || "Recordatorio enviado correctamente", type: "success" });
+    } catch (err) {
+      setToast({ message: parsearError(err), type: "error" });
+    } finally {
+      setEnviandoRecordatorio(false);
+    }
   };
 
   const abrirExportModal = async () => {
@@ -1076,7 +1207,8 @@ export default function Cobranza() {
                     ) : morosidad.length === 0 ? (
                       <tr><td colSpan={5} className="text-center py-12 text-gray-400">Sin datos de morosidad</td></tr>
                     ) : morosidad.map((m, i) => (
-                      <tr key={i} className="hover:bg-gray-50">
+                      <tr key={i} onClick={() => setMorosidadRuc(m.ruc)}
+                        className="hover:bg-gray-100 cursor-pointer transition-colors">
                         <td className="px-4 py-3">
                           <p className="font-medium text-gray-800">{m.cliente_nombre}</p>
                           <p className="text-xs text-gray-500">{m.ruc}</p>
@@ -1099,6 +1231,16 @@ export default function Cobranza() {
 
         </main>
       </div>
+
+      {/* ══ Modal: Detalle de Morosidad ═════════════════════════════════════ */}
+      {morosidadRuc && (
+        <ModalDetalleMorosidad
+          ruc={morosidadRuc}
+          onClose={() => setMorosidadRuc(null)}
+          onEnviarRecordatorio={handleEnviarRecordatorioMorosidad}
+          enviandoRecordatorio={enviandoRecordatorio}
+        />
+      )}
 
       {/* ══ Modal: Registrar Cobro ══════════════════════════════════════════ */}
       {pagoModal && (

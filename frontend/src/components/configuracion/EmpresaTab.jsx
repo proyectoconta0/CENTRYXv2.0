@@ -44,7 +44,7 @@ export default function EmpresaTab() {
           smtp_from_name: e.smtp_from_name || "",
         });
         setSmtpPasswordConfigurado(!!e.smtp_password_configurado);
-        setLogoUrl(e.logo_url ? `${getLogoUrl()}?v=${e.updated_at || ""}` : null);
+        setLogoUrl(getLogoUrl(e));
       })
       .finally(() => setLoading(false));
   };

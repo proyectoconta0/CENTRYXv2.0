@@ -943,6 +943,15 @@ def _run_notas_credito_migrations():
 
 _run_notas_credito_migrations()
 
+
+# ── Migración: logo de empresa en BD (base64) — Railway no tiene disco persistente ──
+def _run_logo_base64_migration():
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE configuracion_empresa ADD COLUMN IF NOT EXISTS logo_base64 TEXT"))
+        conn.commit()
+
+_run_logo_base64_migration()
+
 app = FastAPI(
     title="Centryx API",
     description="Sistema Gerencial para ElectroPro SAC — Lima, Perú",

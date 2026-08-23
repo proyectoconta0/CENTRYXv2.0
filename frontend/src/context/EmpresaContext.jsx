@@ -33,7 +33,7 @@ export function EmpresaProvider({ children }) {
     document.documentElement.style.setProperty("--color-principal", empresa.color_principal);
   }, [empresa?.color_principal]);
 
-  const logoUrl = empresa?.logo_url ? `${getLogoUrl()}?v=${empresa.updated_at || ""}` : null;
+  const logoUrl = getLogoUrl(empresa);
 
   return (
     <EmpresaContext.Provider value={{ empresa, logoUrl, loading, recargarEmpresa: recargar }}>

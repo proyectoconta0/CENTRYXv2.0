@@ -85,7 +85,9 @@ def construir_pdf_comprobante(empresa: dict, s: dict) -> bytes:
     logo_flowable = ""
     if empresa.get("logo_path"):
         try:
-            logo_flowable = Image(empresa["logo_path"], width=2.4 * cm, height=2.4 * cm, kind="proportional")
+            origen = empresa["logo_path"]
+            origen = io.BytesIO(origen) if isinstance(origen, (bytes, bytearray)) else origen
+            logo_flowable = Image(origen, width=2.4 * cm, height=2.4 * cm, kind="proportional")
         except Exception:
             logo_flowable = ""
 

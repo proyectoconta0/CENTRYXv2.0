@@ -16,6 +16,7 @@ class ConfiguracionEmpresa(Base):
     web                     = Column(String(200))
     whatsapp_soporte        = Column(String(20))
     logo_path               = Column(String(500))
+    logo_base64             = Column(Text)
     mensaje_comprobante     = Column(String(300))
     color_principal         = Column(String(7), default="#1e40af")
     moneda_principal        = Column(String(3), default="PEN")

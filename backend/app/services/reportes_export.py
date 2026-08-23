@@ -147,14 +147,20 @@ def _tabla_datos(headers: list, filas: list, color_hex: str) -> Table:
     return tabla
 
 
-def _logo_flowable(logo_path: Optional[str]) -> Optional[Image]:
-    """Escala el logo manteniendo proporción, sin exceder LOGO_ANCHO_MAX x LOGO_ALTO_MAX."""
-    if not logo_path:
+def _logo_flowable(logo_fuente) -> Optional[Image]:
+    """Escala el logo manteniendo proporción, sin exceder LOGO_ANCHO_MAX x LOGO_ALTO_MAX.
+
+    logo_fuente puede ser una ruta en disco (str) o los bytes del logo ya
+    decodificados desde base64; en ese caso se abre un BytesIO nuevo por
+    cada lectura porque el stream se consume tras la primera.
+    """
+    if not logo_fuente:
         return None
+    es_bytes = isinstance(logo_fuente, (bytes, bytearray))
     try:
-        iw, ih = ImageReader(logo_path).getSize()
+        iw, ih = ImageReader(io.BytesIO(logo_fuente) if es_bytes else logo_fuente).getSize()
         escala = min(LOGO_ANCHO_MAX / iw, LOGO_ALTO_MAX / ih)
-        return Image(logo_path, width=iw * escala, height=ih * escala)
+        return Image(io.BytesIO(logo_fuente) if es_bytes else logo_fuente, width=iw * escala, height=ih * escala)
     except Exception:
         return None
 

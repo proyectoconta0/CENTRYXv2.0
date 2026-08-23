@@ -9,6 +9,7 @@ from app.core.security import get_current_usuario
 from app.routers.garantias import revertir_cobro_garantia
 from app.services.conciliacion_service import limpiar_movimiento_sistema_por_pago
 from app.services.auditoria_service import registrar_log, ip_de
+from app.services.email_service import enviar_email, email_configurado, EmailNoConfiguradoError
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
@@ -252,6 +253,109 @@ def morosidad_por_cliente(db: Session = Depends(get_db)):
         r["dias_mora_max"]  = max(0, r["dias_mora_max"])
 
     return result
+
+
+# ─── Detalle de morosidad por cliente (drill-down desde la fila de la tabla) ─
+# Semáforo propio de esta vista (🔴 ≥90 / 🟠 30-89 / 🟡 <30 días), distinto del
+# _semaforo() de arriba (verde/amarillo/rojo usado en Cuentas por Cobrar y en
+# morosidad-por-cliente) — no se toca ese cálculo existente.
+
+def _morosidad_detalle(db: Session, ruc_cliente: str) -> dict:
+    facturas = db.query(VentaComercial).filter(
+        VentaComercial.ruc_cliente == ruc_cliente,
+        VentaComercial.saldo_pendiente > 0,
+        VentaComercial.estado != "Anulada",
+        VentaComercial.tipo_documento.in_(TIPOS_COBRANZA),
+    ).order_by(VentaComercial.fecha_vencimiento).all()
+
+    hoy = date.today()
+    detalle = []
+
+    for f in facturas:
+        if f.fecha_vencimiento:
+            dias_vencido = (hoy - f.fecha_vencimiento).days
+        else:
+            dias_vencido = (hoy - f.fecha).days if f.fecha else 0
+
+        if dias_vencido >= 90:
+            semaforo = "rojo"
+        elif dias_vencido >= 30:
+            semaforo = "naranja"
+        else:
+            semaforo = "amarillo"
+
+        detalle.append({
+            "numero_factura":    f.numero_factura,
+            "tipo_documento":    f.tipo_documento,
+            "fecha_emision":     f.fecha.isoformat() if f.fecha else None,
+            "fecha_vencimiento": f.fecha_vencimiento.isoformat() if f.fecha_vencimiento else None,
+            "monto_total":       round(float(f.precio_venta or f.monto or 0), 2),
+            "saldo_pendiente":   round(float(f.saldo_pendiente or 0), 2),
+            "dias_vencido":      dias_vencido,
+            "semaforo":          semaforo,
+        })
+
+    return {
+        "cliente":       ruc_cliente,
+        "razon_social":  facturas[0].razon_social_cliente if facturas else "",
+        "total_deuda":   round(sum(d["saldo_pendiente"] for d in detalle), 2),
+        "dias_promedio": round(sum(d["dias_vencido"] for d in detalle) / len(detalle)) if detalle else 0,
+        "facturas":      detalle,
+    }
+
+
+@router.get("/morosidad/{ruc_cliente}")
+def morosidad_detalle_cliente(ruc_cliente: str, db: Session = Depends(get_db)):
+    return _morosidad_detalle(db, ruc_cliente)
+
+
+@router.post("/morosidad/{ruc_cliente}/recordatorio")
+def enviar_recordatorio_morosidad(ruc_cliente: str, http_request: Request, db: Session = Depends(get_db),
+                                   usuario: Usuario = Depends(get_current_usuario)):
+    if not email_configurado():
+        raise HTTPException(400, "Configure el email en el archivo .env para poder enviar correos")
+
+    detalle = _morosidad_detalle(db, ruc_cliente)
+    if not detalle["facturas"]:
+        raise HTTPException(404, "No se encontraron facturas vencidas para este cliente")
+
+    cliente = db.query(Cliente).filter(Cliente.ruc == ruc_cliente).first()
+    destinatario = (cliente.email if cliente else None) or ""
+    if not destinatario.strip():
+        raise HTTPException(400, "El cliente no tiene un correo electrónico registrado")
+
+    lineas = [
+        f"Estimado(a) {detalle['razon_social']},", "",
+        "Le recordamos que tiene las siguientes facturas pendientes de pago:", "",
+    ]
+    for f in detalle["facturas"]:
+        lineas.append(
+            f"- {f['numero_factura'] or '—'} ({f['tipo_documento']}): "
+            f"S/ {f['saldo_pendiente']:,.2f} — vencida hace {f['dias_vencido']} días"
+        )
+    lineas += [
+        "", f"Total adeudado: S/ {detalle['total_deuda']:,.2f}", "",
+        "Agradecemos su pronta regularización.",
+    ]
+    cuerpo = "\n".join(lineas)
+
+    try:
+        enviar_email(
+            destinatario=destinatario.strip(),
+            asunto=f"Recordatorio de pago pendiente — {detalle['razon_social']}",
+            cuerpo=cuerpo,
+        )
+    except EmailNoConfiguradoError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"No se pudo enviar el correo: {e}")
+
+    registrar_log(
+        db, usuario.id, usuario.nombre, "cobranza", "Envió recordatorio de morosidad",
+        f"Envió recordatorio a {detalle['razon_social']} ({ruc_cliente}) — S/ {detalle['total_deuda']:,.2f}",
+        ip_de(http_request),
+    )
+    return {"mensaje": f"Recordatorio enviado a {destinatario.strip()}"}
 
 
 # ─── Lista de Cobros: todos los cobros ya registrados ───────────────────────

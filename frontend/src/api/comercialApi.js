@@ -120,6 +120,8 @@ export const deletePago            = (pagoId)             => API.delete(`/cobran
 export const extornarPago          = (pagoId, data)       => API.put(`/cobranza/pagos/${pagoId}/extornar`, data).then(r => r.data);
 export const exportarCobranza      = (params = {})        => API.get("/cobranza/exportar", { params, responseType: "blob" }).then(r => r.data);
 export const getPagosCobranza      = (params = {})        => API.get("/cobranza/pagos", { params }).then(r => r.data);
+export const getMorosidadDetalle   = (ruc_cliente)         => API.get(`/cobranza/morosidad/${ruc_cliente}`).then(r => r.data);
+export const enviarRecordatorioMorosidad = (ruc_cliente)   => API.post(`/cobranza/morosidad/${ruc_cliente}/recordatorio`).then(r => r.data);
 
 // ── Garantías (depósitos de clientes, no ingresos) ────────────────────────────
 export const getGarantias          = (params = {})        => API.get("/garantias", { params }).then(r => r.data);

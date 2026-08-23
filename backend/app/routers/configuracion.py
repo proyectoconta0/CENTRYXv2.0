@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from datetime import datetime
@@ -5,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -22,7 +23,6 @@ from app.services.reportes_export import construir_excel
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-LOGO_DIR = Path("uploads/empresa")
 LOGO_MAX_BYTES = 2 * 1024 * 1024
 LOGO_TIPOS_VALIDOS = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"}
 
@@ -57,7 +57,7 @@ def _serialize_empresa(e: ConfiguracionEmpresa) -> dict:
         "web":                   e.web or "",
         "whatsapp_soporte":      e.whatsapp_soporte or "",
         "mensaje_comprobante":   e.mensaje_comprobante or "",
-        "logo_url":              "/api/configuracion/empresa/logo" if e.logo_path else None,
+        "logo_url":              e.logo_base64 or ("/api/configuracion/empresa/logo" if e.logo_path else None),
         "color_principal":       e.color_principal or "#1e40af",
         "moneda_principal":      e.moneda_principal or "PEN",
         "rubro":                 e.rubro or "",
@@ -144,21 +144,25 @@ async def subir_logo(file: UploadFile = File(...), db: Session = Depends(get_db)
     if len(contenido) > LOGO_MAX_BYTES:
         raise HTTPException(400, "El logo no debe superar 2 MB")
 
-    LOGO_DIR.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename or "logo.png").suffix or ".png"
-    ruta = LOGO_DIR / f"logo{ext}"
-    ruta.write_bytes(contenido)
+    # Railway no tiene disco persistente: los archivos subidos se pierden en
+    # cada deploy. Se guarda el logo como base64 en la BD en vez de en disco.
+    logo_base64 = base64.b64encode(contenido).decode("utf-8")
+    logo_data_url = f"data:{file.content_type};base64,{logo_base64}"
 
     empresa = _get_empresa(db)
-    empresa.logo_path = str(ruta)
+    empresa.logo_base64 = logo_data_url
     empresa.updated_at = datetime.utcnow()
     db.commit()
-    return {"ok": True, "logo_url": "/api/configuracion/empresa/logo"}
+    return {"ok": True, "logo_url": logo_data_url}
 
 
 @router.get("/empresa/logo")
 def ver_logo(db: Session = Depends(get_db)):
     empresa = db.query(ConfiguracionEmpresa).first()
+    if empresa and empresa.logo_base64:
+        content_type, _, b64data = empresa.logo_base64.partition(",")
+        content_type = content_type.removeprefix("data:").partition(";")[0] or "image/png"
+        return Response(content=base64.b64decode(b64data), media_type=content_type)
     if not empresa or not empresa.logo_path or not Path(empresa.logo_path).exists():
         raise HTTPException(404, "Sin logo configurado")
     return FileResponse(empresa.logo_path)

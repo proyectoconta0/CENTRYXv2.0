@@ -1558,7 +1558,7 @@ def enviar_correo(comp_id: int, data: EnviarComprobanteRequest, db: Session = De
     if not empresa_cfg or not empresa_cfg.smtp_host or not empresa_cfg.smtp_usuario or not empresa_cfg.smtp_password:
         raise HTTPException(400, "Verifique la configuración SMTP en Configuración")
 
-    empresa = get_empresa_header(db)
+    empresa = get_empresa_header(db, para_pdf=True)
     asunto = f"Comprobante de pago {s['numero_documento']} – {empresa.get('nombre_empresa') or 'Centryx'}"
     cuerpo_html = construir_cuerpo_html(empresa, s)
     nombre_pdf = _nombre_adjunto_comprobante(s["tipo_documento"], s["numero_documento"])

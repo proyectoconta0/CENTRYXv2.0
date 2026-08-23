@@ -93,7 +93,7 @@ def reporte_general(
 ):
     d, h, label = svc.resolver_periodo(periodo, desde, hasta)
     formato = _resolver_formato(formato)
-    empresa_header = get_empresa_header(db)
+    empresa_header = get_empresa_header(db, para_pdf=True)
     color_emp = empresa_header["color_principal"]
 
     resumen  = svc.resumen_ejecutivo(db, d, h)
@@ -208,7 +208,7 @@ def reporte_ventas(
 ):
     d, h, label = svc.resolver_periodo(periodo, desde, hasta)
     formato = _resolver_formato(formato)
-    empresa_header = get_empresa_header(db)
+    empresa_header = get_empresa_header(db, para_pdf=True)
     color_emp = empresa_header["color_principal"]
     filas = svc.datos_ventas(db, d, h, cliente, tipo_servicio, tipo_documento)
 
@@ -253,7 +253,7 @@ def reporte_gastos(
 ):
     d, h, label = svc.resolver_periodo(periodo, desde, hasta)
     formato = _resolver_formato(formato)
-    empresa_header = get_empresa_header(db)
+    empresa_header = get_empresa_header(db, para_pdf=True)
     color_emp = empresa_header["color_principal"]
     filas = svc.datos_gastos(db, d, h, categoria, area, tipo_comprobante, proveedor)
 
@@ -300,7 +300,7 @@ def reporte_cobranza(
 ):
     d, h, label = svc.resolver_periodo(periodo, desde, hasta)
     formato = _resolver_formato(formato)
-    empresa_header = get_empresa_header(db)
+    empresa_header = get_empresa_header(db, para_pdf=True)
     color_emp = empresa_header["color_principal"]
     filas = svc.datos_cobranza(db, d, h, cliente, estado)
 
@@ -345,7 +345,7 @@ def reporte_flujo_caja(
 ):
     d, h, label = svc.resolver_periodo(periodo, desde, hasta)
     formato = _resolver_formato(formato)
-    empresa_header = get_empresa_header(db)
+    empresa_header = get_empresa_header(db, para_pdf=True)
     color_emp = empresa_header["color_principal"]
     filas = svc.datos_flujo_caja(db, d, h, cuenta_bancaria_id)
 
@@ -388,7 +388,7 @@ def reporte_proveedores(
 ):
     d, h, label = svc.resolver_periodo(periodo, desde, hasta)
     formato = _resolver_formato(formato)
-    empresa_header = get_empresa_header(db)
+    empresa_header = get_empresa_header(db, para_pdf=True)
     color_emp = empresa_header["color_principal"]
     filas = svc.datos_proveedores(db, d, h, proveedor, estado_pago)
 

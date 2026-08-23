@@ -37,7 +37,14 @@ export const subirLogo = (file) => {
   fd.append("file", file);
   return API.post("/empresa/logo", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
 };
-export const getLogoUrl = () => `${process.env.REACT_APP_API_URL || "http://localhost:8000"}/api/configuracion/empresa/logo`;
+// El logo se guarda como base64 en la BD (Railway no tiene disco persistente):
+// si logo_url ya es una data: URL se usa tal cual; si no (empresas con un
+// logo antiguo subido a disco), se cae al endpoint del backend.
+export const getLogoUrl = (empresa) => {
+  if (!empresa?.logo_url) return null;
+  if (empresa.logo_url.startsWith("data:image")) return empresa.logo_url;
+  return `${process.env.REACT_APP_API_URL || "http://localhost:8000"}/api/configuracion/empresa/logo?v=${empresa.updated_at || ""}`;
+};
 export const probarSmtp = () => API.get("/smtp/probar").then(r => r.data);
 
 // ── Rubro ────────────────────────────────────────────────────────────────────

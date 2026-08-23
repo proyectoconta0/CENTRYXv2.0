@@ -85,7 +85,7 @@ def _generar_pdf_estado_cuenta(db: Session, cliente_id: int, d: date, h: date):
             "saldo":             f"{saldo:,.2f}",
         })
 
-    empresa = get_empresa_header(db)
+    empresa = get_empresa_header(db, para_pdf=True)
     cliente_dict = {"razon_social": cliente.razon_social, "ruc": cliente.ruc, "direccion": cliente.direccion}
     resumen = {
         "total_facturado":  round(total_facturado, 2),

@@ -302,7 +302,7 @@ def pdf_orden_cobro(orden_id: int, db: Session = Depends(get_db)):
     orden = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id).first()
     if not orden:
         raise HTTPException(404, "Orden de cobro no encontrada")
-    empresa = get_empresa_header(db)
+    empresa = get_empresa_header(db, para_pdf=True)
     pdf_bytes = construir_pdf_orden_cobro(empresa, orden)
     return Response(
         content=pdf_bytes,
