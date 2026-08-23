@@ -175,11 +175,19 @@ def _run_migrations():
             conn.execute(text(sql))
         conn.commit()
         conn.execute(text("""
-            UPDATE garantias g SET
-                cliente_ruc    = c.ruc,
-                cliente_nombre = c.razon_social
-            FROM clientes c
-            WHERE g.cliente_id = c.id AND g.cliente_ruc IS NULL
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='garantias' AND column_name='cliente_id'
+              ) THEN
+                UPDATE garantias g SET
+                    cliente_ruc    = c.ruc,
+                    cliente_nombre = c.razon_social
+                FROM clientes c
+                WHERE g.cliente_id = c.id AND g.cliente_ruc IS NULL;
+              END IF;
+            END $$;
         """))
         conn.commit()
 
@@ -220,11 +228,19 @@ def _run_migrations():
             conn.execute(text(sql))
         conn.commit()
         conn.execute(text("""
-            UPDATE creditos_cliente cc SET
-                cliente_ruc    = c.ruc,
-                cliente_nombre = c.razon_social
-            FROM clientes c
-            WHERE cc.cliente_id = c.id AND cc.cliente_ruc IS NULL
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='creditos_cliente' AND column_name='cliente_id'
+              ) THEN
+                UPDATE creditos_cliente cc SET
+                    cliente_ruc    = c.ruc,
+                    cliente_nombre = c.razon_social
+                FROM clientes c
+                WHERE cc.cliente_id = c.id AND cc.cliente_ruc IS NULL;
+              END IF;
+            END $$;
         """))
         conn.commit()
 
