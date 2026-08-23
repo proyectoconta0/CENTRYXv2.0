@@ -115,9 +115,20 @@ def delete_cliente(db: Session, cliente_id: int):
     c = db.query(Cliente).filter(Cliente.id == cliente_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    tiene_ventas = db.query(VentaComercial).filter(
+        VentaComercial.cliente_id == cliente_id
+    ).first()
+    if tiene_ventas:
+        raise HTTPException(
+            status_code=400,
+            detail="No se puede eliminar el cliente porque tiene comprobantes "
+                   "registrados. Puede desactivarlo en su lugar.",
+        )
+
     c.activo = False
     db.commit()
-    return {"mensaje": "Cliente desactivado"}
+    return {"mensaje": "Cliente eliminado correctamente"}
 
 
 def get_historial(db: Session, cliente_id: int):

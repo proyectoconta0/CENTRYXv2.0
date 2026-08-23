@@ -147,8 +147,15 @@ def actualizar(cliente_id: int, data: ClienteUpdate, http_request: Request, db: 
 
 
 @router.delete("/{cliente_id}")
-def eliminar(cliente_id: int, db: Session = Depends(get_db)):
-    return svc.delete_cliente(db, cliente_id)
+def eliminar(cliente_id: int, http_request: Request, db: Session = Depends(get_db),
+             usuario: Usuario = Depends(get_current_usuario)):
+    cliente = svc.get_cliente(db, cliente_id)
+    resultado = svc.delete_cliente(db, cliente_id)
+    registrar_log(
+        db, usuario.id, usuario.nombre, "clientes", "Eliminó cliente",
+        f"Eliminó cliente {cliente.get('razon_social', '')}", ip_de(http_request),
+    )
+    return resultado
 
 
 @router.get("/{cliente_id}/historial")

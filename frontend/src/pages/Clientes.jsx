@@ -3,8 +3,8 @@ import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import FormCliente from "../components/comercial/FormCliente";
-import { getClientes } from "../api/comercialApi";
-import { HiPlus, HiSearch, HiChevronLeft, HiChevronRight, HiPencil, HiEye } from "react-icons/hi";
+import { getClientes, deleteCliente } from "../api/comercialApi";
+import { HiPlus, HiSearch, HiChevronLeft, HiChevronRight, HiPencil, HiEye, HiTrash } from "react-icons/hi";
 
 function fmtMonto(n) {
   return `S/ ${(n || 0).toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,6 +19,9 @@ export default function Clientes() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editCliente, setEditCliente] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -32,6 +35,21 @@ export default function Clientes() {
   const totalPags = Math.ceil(data.total / 10) || 1;
 
   const handleSaved = () => { setShowForm(false); setEditCliente(null); cargar(); };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await deleteCliente(deleteTarget.id);
+      setDeleteTarget(null);
+      cargar();
+    } catch (err) {
+      setDeleteError(err?.response?.data?.detail || "No se pudo eliminar el cliente.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -112,6 +130,10 @@ export default function Clientes() {
                           className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Editar">
                           <HiPencil className="text-base" />
                         </button>
+                        <button onClick={() => { setDeleteError(""); setDeleteTarget(c); }}
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Eliminar">
+                          <HiTrash className="text-base" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -147,6 +169,36 @@ export default function Clientes() {
 
       {showForm && (
         <FormCliente cliente={editCliente} onClose={() => { setShowForm(false); setEditCliente(null); }} onSaved={handleSaved} />
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-5">
+            <h2 className="text-base font-semibold text-gray-800 mb-2">¿Eliminar este cliente?</h2>
+            <div className="text-sm text-gray-600 mb-3">
+              <div className="font-medium text-gray-800">{deleteTarget.razon_social}</div>
+              <div className="text-xs text-gray-500 font-mono">RUC: {deleteTarget.ruc}</div>
+            </div>
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4">
+              ⚠️ Si tiene comprobantes registrados no podrá eliminarse.
+            </p>
+            {deleteError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-4">
+                {deleteError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => { setDeleteTarget(null); setDeleteError(""); }} disabled={deleting}
+                className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50">
+                Cancelar
+              </button>
+              <button onClick={handleDelete} disabled={deleting}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50">
+                <HiTrash className="text-base" /> {deleting ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
