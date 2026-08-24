@@ -56,6 +56,8 @@ export default function SistemaTab() {
     try {
       await resetearOnboarding();
       setConfirmReset(2);
+      window.dispatchEvent(new Event("onboarding-reset"));
+      window.location.href = "/onboarding";
     } catch {
       setToast({ message: "No se pudo resetear el onboarding", type: "error" });
     } finally {

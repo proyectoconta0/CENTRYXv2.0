@@ -60,10 +60,15 @@ function OnboardingGate({ children }) {
   useEffect(() => {
     if (!isAuth) { setEstado("ok"); return; }
     let activo = true;
-    getOnboardingStatus()
-      .then(r => { if (activo) setEstado(r.completado ? "ok" : "pendiente"); })
-      .catch(() => { if (activo) setEstado("ok"); }); // si falla la verificación, no bloquear el acceso
-    return () => { activo = false; };
+    const verificar = () => {
+      getOnboardingStatus()
+        .then(r => { if (activo) setEstado(r.completado ? "ok" : "pendiente"); })
+        .catch(() => { if (activo) setEstado("ok"); }); // si falla la verificación, no bloquear el acceso
+    };
+    verificar();
+    // Permite forzar la re-consulta sin recargar la página (ver SistemaTab.jsx: reset de onboarding).
+    window.addEventListener("onboarding-reset", verificar);
+    return () => { activo = false; window.removeEventListener("onboarding-reset", verificar); };
   }, [isAuth]);
 
   if (!isAuth || location.pathname === "/login" || location.pathname === "/onboarding") return children;

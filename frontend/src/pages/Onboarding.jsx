@@ -42,7 +42,12 @@ export default function Onboarding() {
   const [nuevoUsuario, setNuevoUsuario] = useState({ nombre: "", email: "", rol: "Vendedor" });
 
   useEffect(() => {
-    getRubro().then(r => setCatalogoRubros(r.catalogo || {})).catch(() => {});
+    getRubro()
+      .then(r => setCatalogoRubros(r.catalogo || {}))
+      .catch(() => {
+        setCatalogoRubros({});
+        setError("No se pudo cargar el catálogo de rubros. Recarga la página.");
+      });
   }, []);
 
   const setEmpresaCampo = (k, v) => setEmpresaForm(f => ({ ...f, [k]: v }));
