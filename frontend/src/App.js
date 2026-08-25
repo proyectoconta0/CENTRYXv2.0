@@ -66,9 +66,15 @@ function OnboardingGate({ children }) {
         .catch(() => { if (activo) setEstado("ok"); }); // si falla la verificación, no bloquear el acceso
     };
     verificar();
-    // Permite forzar la re-consulta sin recargar la página (ver SistemaTab.jsx: reset de onboarding).
+    // Permite forzar la re-consulta sin recargar la página (ver SistemaTab.jsx: reset de onboarding,
+    // y Onboarding.jsx: finalizar() al completar el wizard).
     window.addEventListener("onboarding-reset", verificar);
-    return () => { activo = false; window.removeEventListener("onboarding-reset", verificar); };
+    window.addEventListener("onboarding-completado", verificar);
+    return () => {
+      activo = false;
+      window.removeEventListener("onboarding-reset", verificar);
+      window.removeEventListener("onboarding-completado", verificar);
+    };
   }, [isAuth]);
 
   if (!isAuth || location.pathname === "/login" || location.pathname === "/onboarding") return children;

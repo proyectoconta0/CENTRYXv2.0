@@ -122,6 +122,11 @@ export default function Onboarding() {
       }
 
       await recargarEmpresa();
+
+      // Avisar a OnboardingGate para que re-consulte el estado antes de navegar,
+      // si no, queda con estado="pendiente" y rebota de vuelta al wizard.
+      window.dispatchEvent(new Event("onboarding-completado"));
+
       setListo(true);
       setTimeout(() => navigate("/"), 2200);
     } catch (e) {
