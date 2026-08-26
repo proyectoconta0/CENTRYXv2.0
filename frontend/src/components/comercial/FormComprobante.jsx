@@ -1149,7 +1149,7 @@ export default function FormComprobante({ mode, comprobante, onClose, onSaved })
                       const raw           = parseFloat(form.precio_venta);
                       const totalSolesDet = !isNaN(raw) ? convertirASoles(raw, form.moneda, form.tipo_cambio) : null;
                       const tasaNum       = parseFloat(form.tasa_detraccion);
-                      const montoDet      = totalSolesDet != null && !isNaN(tasaNum) ? round2(totalSolesDet * (tasaNum / 100)) : null;
+                      const montoDet      = totalSolesDet != null && !isNaN(tasaNum) ? Math.round(totalSolesDet * (tasaNum / 100)) : null;
                       const montoNeto     = totalSolesDet != null && montoDet != null ? round2(totalSolesDet - montoDet) : null;
                       return (
                         <div className="space-y-4">
@@ -1182,7 +1182,7 @@ export default function FormComprobante({ mode, comprobante, onClose, onSaved })
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <Label>Monto Detracción (S/) — calculado</Label>
-                              <div className="px-4 py-3 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500">{fmtS(montoDet)}</div>
+                              <div className="px-4 py-3 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500">{montoDet != null ? `S/ ${montoDet.toLocaleString("es-PE")}` : "—"}</div>
                             </div>
                             <div>
                               <Label>Monto Neto a Cobrar (S/) — calculado</Label>
