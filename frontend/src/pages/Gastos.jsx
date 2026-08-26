@@ -1812,9 +1812,10 @@ export default function Gastos() {
                       ? parseFloat(form.monto) * parseFloat(form.tipo_cambio || 0)
                       : parseFloat(form.monto);
                     const tasaNum   = parseFloat(form.tasa_detraccion);
-                    const montoDet  = !isNaN(montoSolesDet) && !isNaN(tasaNum) ? Math.round(montoSolesDet * (tasaNum / 100) * 100) / 100 : null;
+                    const montoDet  = !isNaN(montoSolesDet) && !isNaN(tasaNum) ? Math.round(montoSolesDet * (tasaNum / 100)) : null;
                     const montoNeto = !isNaN(montoSolesDet) && montoDet != null ? Math.round((montoSolesDet - montoDet) * 100) / 100 : null;
                     const fmtDet    = n => n != null ? `S/ ${n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
+                    const fmtDetInt = n => n != null ? `S/ ${n.toLocaleString("es-PE")}` : "—";
                     return (
                       <div className="space-y-4">
                         <div>
@@ -1841,7 +1842,7 @@ export default function Gastos() {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="text-xs font-semibold text-gray-700 uppercase">Monto Detracción (S/) — calculado</label>
-                            <div className="mt-1.5 px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-500">{fmtDet(montoDet)}</div>
+                            <div className="mt-1.5 px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-500">{fmtDetInt(montoDet)}</div>
                           </div>
                           <div>
                             <label className="text-xs font-semibold text-gray-700 uppercase">Monto Neto a Pagar (S/) — calculado</label>

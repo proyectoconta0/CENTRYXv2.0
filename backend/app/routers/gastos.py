@@ -192,7 +192,7 @@ def _calcular_detraccion_gasto(tipo_comprobante: Optional[str], tiene_detraccion
     (tiene, tasa, monto_detraccion, monto_neto_pagar, fecha_limite)."""
     if not tiene_detraccion or tipo_comprobante != "Factura" or not tasa or not total:
         return False, None, None, None, None
-    monto_det  = round(total * (tasa / 100), 2)
+    monto_det  = round(total * (tasa / 100))
     monto_neto = round(total - monto_det, 2)
     fecha_lim  = fecha_limite_manual or (_fecha_limite_detraccion(fecha_emision) if fecha_emision else None)
     return True, tasa, monto_det, monto_neto, fecha_lim
