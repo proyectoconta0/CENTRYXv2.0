@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.models.models import Proveedor, ProveedorGasto, Gasto, Usuario
-from app.core.security import get_current_usuario
+from app.core.security import get_current_usuario, get_empresa_id
 from app.services.auditoria_service import registrar_log, ip_de
 from database import get_db
 
@@ -67,8 +67,11 @@ def _semaforo(g: Gasto) -> str:
     return "rojo"
 
 
-def _totales_proveedor(db: Session, proveedor_id: int):
-    gastos = db.query(Gasto).filter(Gasto.proveedor_id == proveedor_id).all()
+def _totales_proveedor(db: Session, proveedor_id: int, empresa_id: Optional[int] = None):
+    q = db.query(Gasto).filter(Gasto.proveedor_id == proveedor_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    gastos = q.all()
     total_comprado = sum(float(g.monto_soles or g.monto or 0) for g in gastos)
     deuda_pendiente = sum(
         float(g.saldo_pendiente or 0)
@@ -78,8 +81,8 @@ def _totales_proveedor(db: Session, proveedor_id: int):
     return round(total_comprado, 2), round(deuda_pendiente, 2)
 
 
-def _serialize(p: Proveedor, db: Session) -> dict:
-    total_comprado, deuda_pendiente = _totales_proveedor(db, p.id)
+def _serialize(p: Proveedor, db: Session, empresa_id: Optional[int] = None) -> dict:
+    total_comprado, deuda_pendiente = _totales_proveedor(db, p.id, empresa_id)
     return {
         "id":                  p.id,
         "tipo_documento":      p.tipo_documento or "",
@@ -125,8 +128,11 @@ def listar(
     page:           int = 1,
     per_page:       int = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(Proveedor)
+    if empresa_id is not None:
+        q = q.filter(Proveedor.empresa_id == empresa_id)
     if search:
         like = f"%{search}%"
         q = q.filter(
@@ -141,7 +147,7 @@ def listar(
     rows  = q.order_by(Proveedor.razon_social.asc()).offset((page - 1) * per_page).limit(per_page).all()
     return {
         "total": total, "page": page, "per_page": per_page,
-        "data": [_serialize(p, db) for p in rows],
+        "data": [_serialize(p, db, empresa_id) for p in rows],
     }
 
 
@@ -149,8 +155,13 @@ def listar(
 
 @router.post("")
 def crear(data: ProveedorCreate, http_request: Request, db: Session = Depends(get_db),
-          usuario: Usuario = Depends(get_current_usuario)):
-    if db.query(Proveedor).filter(Proveedor.numero_documento == data.numero_documento).first():
+          usuario: Usuario = Depends(get_current_usuario),
+          empresa_id: Optional[int] = Depends(get_empresa_id)):
+    # Unicidad de número de documento por empresa
+    q_dup = db.query(Proveedor).filter(Proveedor.numero_documento == data.numero_documento)
+    if empresa_id is not None:
+        q_dup = q_dup.filter(Proveedor.empresa_id == empresa_id)
+    if q_dup.first():
         raise HTTPException(400, f"Ya existe un proveedor con el documento {data.numero_documento}")
     if data.estado not in ESTADOS:
         raise HTTPException(400, f"Estado inválido. Use uno de: {', '.join(ESTADOS)}")
@@ -174,6 +185,7 @@ def crear(data: ProveedorCreate, http_request: Request, db: Session = Depends(ge
         creado_por         = usuario.nombre,
         creado_en          = datetime.utcnow(),
         metodo_creacion    = "Manual",
+        empresa_id         = empresa_id,
     )
     db.add(p)
     db.commit()
@@ -184,30 +196,40 @@ def crear(data: ProveedorCreate, http_request: Request, db: Session = Depends(ge
         f"Creó proveedor {p.razon_social}", ip_de(http_request),
     )
 
-    return _serialize(p, db)
+    return _serialize(p, db, empresa_id)
 
 
 # ── KPIs ─────────────────────────────────────────────────────────────────────
 
 @router.get("/resumen-kpis")
-def resumen_kpis(db: Session = Depends(get_db)):
+def resumen_kpis(db: Session = Depends(get_db),
+                 empresa_id: Optional[int] = Depends(get_empresa_id)):
     hoy = date.today()
     primero_mes, ultimo_mes = _primero_ultimo_mes(hoy)
 
-    total_activos = db.query(Proveedor).filter(Proveedor.estado == "Activo").count()
+    q_activos = db.query(Proveedor).filter(Proveedor.estado == "Activo")
+    if empresa_id is not None:
+        q_activos = q_activos.filter(Proveedor.empresa_id == empresa_id)
+    total_activos = q_activos.count()
 
-    gastos_mes = db.query(Gasto).filter(
+    q_gastos_mes = db.query(Gasto).filter(
         Gasto.proveedor_id.isnot(None),
         Gasto.fecha >= primero_mes,
         Gasto.fecha <= ultimo_mes,
-    ).all()
+    )
+    if empresa_id is not None:
+        q_gastos_mes = q_gastos_mes.filter(Gasto.empresa_id == empresa_id)
+    gastos_mes = q_gastos_mes.all()
     total_comprado_mes = round(sum(float(g.monto_soles or g.monto or 0) for g in gastos_mes), 2)
 
-    gastos_pend = db.query(Gasto).filter(
+    q_gastos_pend = db.query(Gasto).filter(
         Gasto.proveedor_id.isnot(None),
         Gasto.estado_pago != "Pagado",
         Gasto.tipo_comprobante != TIPOS_SIN_CXP,
-    ).all()
+    )
+    if empresa_id is not None:
+        q_gastos_pend = q_gastos_pend.filter(Gasto.empresa_id == empresa_id)
+    gastos_pend = q_gastos_pend.all()
     total_por_pagar = round(sum(float(g.saldo_pendiente or 0) for g in gastos_pend), 2)
     proveedores_deuda_vencida = len({
         g.proveedor_id for g in gastos_pend if _semaforo(g) in ("amarillo", "rojo")
@@ -224,28 +246,44 @@ def resumen_kpis(db: Session = Depends(get_db)):
 # ── Importar desde proveedores_gastos ──────────────────────────────────────
 
 @router.post("/importar-desde-gastos")
-def importar_desde_gastos(db: Session = Depends(get_db)):
+def importar_desde_gastos(db: Session = Depends(get_db),
+                           empresa_id: Optional[int] = Depends(get_empresa_id)):
     hoy = date.today()
     importados = 0
-    for pg in db.query(ProveedorGasto).all():
+
+    q_pg = db.query(ProveedorGasto)
+    if empresa_id is not None:
+        q_pg = q_pg.filter(ProveedorGasto.empresa_id == empresa_id)
+
+    for pg in q_pg.all():
         if not pg.numero_documento or not pg.nombre_proveedor:
             continue
-        if db.query(Proveedor).filter(Proveedor.numero_documento == pg.numero_documento).first():
+        q_exist = db.query(Proveedor).filter(Proveedor.numero_documento == pg.numero_documento)
+        if empresa_id is not None:
+            q_exist = q_exist.filter(Proveedor.empresa_id == empresa_id)
+        if q_exist.first():
             continue
         db.add(Proveedor(
-            tipo_documento=pg.tipo_documento or "RUC",
-            numero_documento=pg.numero_documento,
-            razon_social=pg.nombre_proveedor,
-            estado="Activo",
-            created_at=hoy,
-            updated_at=hoy,
+            tipo_documento   = pg.tipo_documento or "RUC",
+            numero_documento = pg.numero_documento,
+            razon_social     = pg.nombre_proveedor,
+            estado           = "Activo",
+            created_at       = hoy,
+            updated_at       = hoy,
+            empresa_id       = empresa_id,
         ))
         importados += 1
     db.commit()
 
     vinculados = 0
-    for g in db.query(Gasto).filter(Gasto.proveedor_id.is_(None), Gasto.numero_documento.isnot(None)).all():
-        prov = db.query(Proveedor).filter(Proveedor.numero_documento == g.numero_documento).first()
+    q_gastos_sin = db.query(Gasto).filter(Gasto.proveedor_id.is_(None), Gasto.numero_documento.isnot(None))
+    if empresa_id is not None:
+        q_gastos_sin = q_gastos_sin.filter(Gasto.empresa_id == empresa_id)
+    for g in q_gastos_sin.all():
+        q_prov = db.query(Proveedor).filter(Proveedor.numero_documento == g.numero_documento)
+        if empresa_id is not None:
+            q_prov = q_prov.filter(Proveedor.empresa_id == empresa_id)
+        prov = q_prov.first()
         if prov:
             g.proveedor_id = prov.id
             vinculados += 1
@@ -261,11 +299,14 @@ def exportar(
     estado:         str = "",
     tipo_documento: str = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
 
     q = db.query(Proveedor)
+    if empresa_id is not None:
+        q = q.filter(Proveedor.empresa_id == empresa_id)
     if estado:         q = q.filter(Proveedor.estado == estado)
     if tipo_documento: q = q.filter(Proveedor.tipo_documento == tipo_documento)
     rows = q.order_by(Proveedor.razon_social.asc()).all()
@@ -292,7 +333,7 @@ def exportar(
     ws.row_dimensions[1].height = 20
 
     for ri, p in enumerate(rows, 2):
-        total_comprado, deuda_pendiente = _totales_proveedor(db, p.id)
+        total_comprado, deuda_pendiente = _totales_proveedor(db, p.id, empresa_id)
         ws.append([
             p.numero_documento,
             p.tipo_documento or "—",
@@ -327,11 +368,15 @@ def exportar(
 # ── Detalle ──────────────────────────────────────────────────────────────────
 
 @router.get("/{proveedor_id}")
-def obtener(proveedor_id: int, db: Session = Depends(get_db)):
-    p = db.query(Proveedor).filter(Proveedor.id == proveedor_id).first()
+def obtener(proveedor_id: int, db: Session = Depends(get_db),
+            empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(Proveedor).filter(Proveedor.id == proveedor_id)
+    if empresa_id is not None:
+        q = q.filter(Proveedor.empresa_id == empresa_id)
+    p = q.first()
     if not p:
         raise HTTPException(404, "Proveedor no encontrado")
-    return _serialize(p, db)
+    return _serialize(p, db, empresa_id)
 
 
 @router.get("/{proveedor_id}/historial-compras")
@@ -340,11 +385,17 @@ def historial_compras(
     fecha_desde:  Optional[date] = None,
     fecha_hasta:  Optional[date] = None,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
-    if not db.query(Proveedor).filter(Proveedor.id == proveedor_id).first():
+    q_p = db.query(Proveedor).filter(Proveedor.id == proveedor_id)
+    if empresa_id is not None:
+        q_p = q_p.filter(Proveedor.empresa_id == empresa_id)
+    if not q_p.first():
         raise HTTPException(404, "Proveedor no encontrado")
 
     q = db.query(Gasto).filter(Gasto.proveedor_id == proveedor_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if fecha_desde: q = q.filter(Gasto.fecha >= fecha_desde)
     if fecha_hasta: q = q.filter(Gasto.fecha <= fecha_hasta)
     rows = q.order_by(Gasto.fecha.desc()).all()
@@ -364,15 +415,22 @@ def historial_compras(
 
 
 @router.get("/{proveedor_id}/cuentas-por-pagar")
-def cuentas_por_pagar(proveedor_id: int, db: Session = Depends(get_db)):
-    if not db.query(Proveedor).filter(Proveedor.id == proveedor_id).first():
+def cuentas_por_pagar(proveedor_id: int, db: Session = Depends(get_db),
+                      empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q_p = db.query(Proveedor).filter(Proveedor.id == proveedor_id)
+    if empresa_id is not None:
+        q_p = q_p.filter(Proveedor.empresa_id == empresa_id)
+    if not q_p.first():
         raise HTTPException(404, "Proveedor no encontrado")
 
-    rows = db.query(Gasto).filter(
+    q = db.query(Gasto).filter(
         Gasto.proveedor_id == proveedor_id,
         Gasto.estado_pago != "Pagado",
         Gasto.tipo_comprobante != TIPOS_SIN_CXP,
-    ).order_by(Gasto.fecha_vencimiento.asc()).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    rows = q.order_by(Gasto.fecha_vencimiento.asc()).all()
 
     data = [{
         "id":                 g.id,
@@ -391,17 +449,25 @@ def cuentas_por_pagar(proveedor_id: int, db: Session = Depends(get_db)):
 # ── Actualizar ───────────────────────────────────────────────────────────────
 
 @router.put("/{proveedor_id}")
-def actualizar(proveedor_id: int, data: ProveedorUpdate, http_request: Request, db: Session = Depends(get_db),
-                usuario: Usuario = Depends(get_current_usuario)):
-    p = db.query(Proveedor).filter(Proveedor.id == proveedor_id).first()
+def actualizar(proveedor_id: int, data: ProveedorUpdate, http_request: Request,
+               db: Session = Depends(get_db),
+               usuario: Usuario = Depends(get_current_usuario),
+               empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(Proveedor).filter(Proveedor.id == proveedor_id)
+    if empresa_id is not None:
+        q = q.filter(Proveedor.empresa_id == empresa_id)
+    p = q.first()
     if not p:
         raise HTTPException(404, "Proveedor no encontrado")
 
     if data.numero_documento and data.numero_documento != p.numero_documento:
-        if db.query(Proveedor).filter(
+        q_dup = db.query(Proveedor).filter(
             Proveedor.numero_documento == data.numero_documento,
             Proveedor.id != proveedor_id,
-        ).first():
+        )
+        if empresa_id is not None:
+            q_dup = q_dup.filter(Proveedor.empresa_id == empresa_id)
+        if q_dup.first():
             raise HTTPException(400, f"Ya existe un proveedor con el documento {data.numero_documento}")
     if data.estado is not None and data.estado not in ESTADOS:
         raise HTTPException(400, f"Estado inválido. Use uno de: {', '.join(ESTADOS)}")
@@ -409,7 +475,7 @@ def actualizar(proveedor_id: int, data: ProveedorUpdate, http_request: Request, 
     fields = data.model_dump(exclude_unset=True)
     for k, v in fields.items():
         setattr(p, k, v)
-    p.updated_at = date.today()
+    p.updated_at    = date.today()
     p.modificado_por = usuario.nombre
     p.modificado_en  = datetime.utcnow()
 
@@ -421,12 +487,16 @@ def actualizar(proveedor_id: int, data: ProveedorUpdate, http_request: Request, 
         f"Editó proveedor {p.razon_social}", ip_de(http_request),
     )
 
-    return _serialize(p, db)
+    return _serialize(p, db, empresa_id)
 
 
 @router.delete("/{proveedor_id}")
-def eliminar(proveedor_id: int, db: Session = Depends(get_db)):
-    p = db.query(Proveedor).filter(Proveedor.id == proveedor_id).first()
+def eliminar(proveedor_id: int, db: Session = Depends(get_db),
+             empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(Proveedor).filter(Proveedor.id == proveedor_id)
+    if empresa_id is not None:
+        q = q.filter(Proveedor.empresa_id == empresa_id)
+    p = q.first()
     if not p:
         raise HTTPException(404, "Proveedor no encontrado")
     db.query(Gasto).filter(Gasto.proveedor_id == proveedor_id).update({Gasto.proveedor_id: None})

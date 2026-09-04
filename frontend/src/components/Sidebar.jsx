@@ -3,13 +3,13 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useEmpresa } from "../context/EmpresaContext";
 import { useSidebar } from "../context/SidebarContext";
-import { tienePermiso } from "../core/permisos";
+import { tienePermiso, esSuperadmin } from "../core/permisos";
 import { FaWhatsapp } from "react-icons/fa";
 import {
   HiChartBar, HiCurrencyDollar, HiCollection, HiCreditCard, HiClipboardList,
   HiTrendingUp, HiUsers, HiOfficeBuilding, HiLibrary,
   HiPresentationChartLine, HiDocumentReport,
-  HiCog, HiLogout, HiChevronLeft, HiChevronRight,
+  HiCog, HiLogout, HiChevronLeft, HiChevronRight, HiShieldCheck,
 } from "react-icons/hi";
 
 // Orden pensado para un usuario nuevo: primero a quién le vendo/compro
@@ -53,6 +53,7 @@ export default function Sidebar() {
     .filter(p => !CONECTORES.has(p.toLowerCase()));
   const iniciales = palabrasIniciales.slice(0, 2).map(p => p[0].toUpperCase()).join("") || "E";
   const itemsVisibles = NAV_ITEMS.filter(item => tienePermiso(usuario?.rol, item.modulo));
+  const esSA = esSuperadmin(usuario?.rol);
 
   const handleSoporteClick = () => {
     const numero = empresa?.whatsapp_soporte;
@@ -62,6 +63,26 @@ export default function Sidebar() {
       return;
     }
     window.open(`https://wa.me/${numero}`, "_blank");
+  };
+
+  const renderNavItem = ({ icon: Icon, label, path }) => {
+    const active = location.pathname === path;
+    return (
+      <button
+        key={path}
+        onClick={() => { navigate(path); closeMobile(); }}
+        title={collapsed ? label : undefined}
+        style={active ? { backgroundColor: color } : undefined}
+        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
+          active
+            ? "text-white shadow-lg shadow-blue-900/40"
+            : "text-slate-400 hover:bg-white/5 hover:text-white"
+        }`}
+      >
+        <Icon className="text-lg flex-shrink-0" />
+        {!collapsed && <span className="truncate">{label}</span>}
+      </button>
+    );
   };
 
   return (
@@ -151,25 +172,15 @@ export default function Sidebar() {
           más ítems de los que entran en la pantalla, se recortan en vez de
           scrollear (así lo pidió el usuario explícitamente). */}
       <nav className="flex-1 flex flex-col justify-center overflow-hidden px-2 space-y-0.5">
-        {itemsVisibles.map(({ icon: Icon, label, path }) => {
-          const active = location.pathname === path;
-          return (
-            <button
-              key={path}
-              onClick={() => { navigate(path); closeMobile(); }}
-              title={collapsed ? label : undefined}
-              style={active ? { backgroundColor: color } : undefined}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
-                active
-                  ? "text-white shadow-lg shadow-blue-900/40"
-                  : "text-slate-400 hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              <Icon className="text-lg flex-shrink-0" />
-              {!collapsed && <span className="truncate">{label}</span>}
-            </button>
-          );
-        })}
+        {itemsVisibles.map(renderNavItem)}
+
+        {/* Link Admin Panel — solo visible para Superadmin */}
+        {esSA && (
+          <>
+            <div className="my-1 border-t border-white/10" />
+            {renderNavItem({ icon: HiShieldCheck, label: "Admin Panel", path: "/admin" })}
+          </>
+        )}
       </nav>
 
       {/* Footer usuario */}

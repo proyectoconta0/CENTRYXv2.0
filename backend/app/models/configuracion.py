@@ -1,12 +1,13 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Numeric, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey
 from database import Base
 
 
 class ConfiguracionEmpresa(Base):
-    """Fila única (singleton) con los datos de la empresa y el estado del onboarding."""
+    """Una fila por empresa (tenant) con sus datos y estado del onboarding."""
     __tablename__ = "configuracion_empresa"
 
     id                      = Column(Integer, primary_key=True, index=True)
+    empresa_id              = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True, unique=True)
     nombre_empresa          = Column(String(200))
     ruc                     = Column(String(11))
     direccion               = Column(String(200))
@@ -39,7 +40,8 @@ class ConfiguracionAlerta(Base):
     __tablename__ = "configuracion_alertas"
 
     id            = Column(Integer, primary_key=True, index=True)
-    tipo_alerta   = Column(String(50), unique=True, nullable=False)
+    empresa_id    = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
+    tipo_alerta   = Column(String(50), nullable=False)
     activa        = Column(Boolean, default=True)
     valor_umbral  = Column(Numeric)
     created_at    = Column(DateTime)
@@ -50,6 +52,7 @@ class ConfiguracionDocumento(Base):
     __tablename__ = "configuracion_documentos"
 
     id              = Column(Integer, primary_key=True, index=True)
-    tipo_documento  = Column(String(50), unique=True, nullable=False)
+    empresa_id      = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
+    tipo_documento  = Column(String(50), nullable=False)
     prefijo         = Column(String(20), default="")
     proximo_numero  = Column(Integer, default=1)

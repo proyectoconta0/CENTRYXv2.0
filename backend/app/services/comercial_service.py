@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.models import Cliente
@@ -5,23 +6,37 @@ from app.models.comercial import Cotizacion, VentaComercial
 from datetime import date
 
 
-def get_resumen(db: Session) -> dict:
-    pendientes = db.query(Cotizacion).filter(
+def get_resumen(db: Session, empresa_id: Optional[int] = None) -> dict:
+    q_cot = db.query(Cotizacion).filter(
         Cotizacion.estado.in_(["borrador", "enviada", "aprobada"]),
-        Cotizacion.venta_comercial_id == None
-    ).all()
+        Cotizacion.venta_comercial_id == None,
+    )
+    if empresa_id is not None:
+        q_cot = q_cot.filter(Cotizacion.empresa_id == empresa_id)
+    pendientes = q_cot.all()
+
     monto_pendiente = sum(c.monto for c in pendientes)
     hoy = date.today()
     por_vencer = [c for c in pendientes if 0 <= (c.fecha_vencimiento - hoy).days <= 7]
-    clientes_activos = db.query(func.count(Cliente.id)).filter(Cliente.activo == True).scalar() or 0
-    top_row = (
+
+    q_cli = db.query(func.count(Cliente.id)).filter(Cliente.activo == True)
+    if empresa_id is not None:
+        q_cli = q_cli.filter(Cliente.empresa_id == empresa_id)
+    clientes_activos = q_cli.scalar() or 0
+
+    q_top = (
         db.query(Cliente.razon_social, func.sum(VentaComercial.monto).label("total"))
         .join(VentaComercial, VentaComercial.cliente_id == Cliente.id)
-        .group_by(Cliente.razon_social)
-        .order_by(func.sum(VentaComercial.monto).desc())
-        .first()
     )
-    ticket_row = db.query(func.avg(VentaComercial.monto)).scalar() or 0
+    if empresa_id is not None:
+        q_top = q_top.filter(VentaComercial.empresa_id == empresa_id)
+    top_row = q_top.group_by(Cliente.razon_social).order_by(func.sum(VentaComercial.monto).desc()).first()
+
+    q_ticket = db.query(func.avg(VentaComercial.monto))
+    if empresa_id is not None:
+        q_ticket = q_ticket.filter(VentaComercial.empresa_id == empresa_id)
+    ticket_row = q_ticket.scalar() or 0
+
     return {
         "cotizaciones_pendientes": len(pendientes),
         "monto_cotizaciones_pendientes": round(monto_pendiente, 2),
@@ -37,13 +52,15 @@ def get_resumen(db: Session) -> dict:
     }
 
 
-def get_historial_por_servicio(db: Session) -> list:
-    rows = (
-        db.query(VentaComercial.tipo_servicio, func.sum(VentaComercial.monto).label("total"))
-        .group_by(VentaComercial.tipo_servicio)
-        .order_by(func.sum(VentaComercial.monto).desc())
-        .all()
-    )
+def get_historial_por_servicio(db: Session, empresa_id: Optional[int] = None) -> dict:
+    q = db.query(
+        VentaComercial.tipo_servicio,
+        func.sum(VentaComercial.monto).label("total"),
+    ).group_by(VentaComercial.tipo_servicio)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    rows = q.order_by(func.sum(VentaComercial.monto).desc()).all()
+
     total = sum(r.total for r in rows) or 1
     servicio_top = rows[0].tipo_servicio if rows else None
     result = [

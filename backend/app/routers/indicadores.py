@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from app.services import indicadores_service as svc
+from app.core.security import get_empresa_id
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -29,51 +30,65 @@ def _resolver_rango(desde: Optional[date], hasta: Optional[date]):
 
 
 @router.get("/resumen")
-def resumen(periodo: str = "mes", db: Session = Depends(get_db)):
+def resumen(periodo: str = "mes", db: Session = Depends(get_db),
+            empresa_id: Optional[int] = Depends(get_empresa_id)):
     if periodo not in ("mes", "año"):
         periodo = "mes"
-    return svc.resumen_simple(db, periodo)
+    return svc.resumen_simple(db, periodo, empresa_id)
 
 
 @router.get("/rentabilidad")
-def rentabilidad(desde: Optional[date] = None, hasta: Optional[date] = None, db: Session = Depends(get_db)):
+def rentabilidad(desde: Optional[date] = None, hasta: Optional[date] = None,
+                 db: Session = Depends(get_db),
+                 empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = _resolver_rango(desde, hasta)
-    return svc.rentabilidad(db, d, h)
+    return svc.rentabilidad(db, d, h, empresa_id)
 
 
 @router.get("/liquidez")
-def liquidez(desde: Optional[date] = None, hasta: Optional[date] = None, db: Session = Depends(get_db)):
+def liquidez(desde: Optional[date] = None, hasta: Optional[date] = None,
+             db: Session = Depends(get_db),
+             empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = _resolver_rango(desde, hasta)
-    return svc.liquidez(db, d, h)
+    return svc.liquidez(db, d, h, empresa_id)
 
 
 @router.get("/cobranza")
-def cobranza(desde: Optional[date] = None, hasta: Optional[date] = None, db: Session = Depends(get_db)):
+def cobranza(desde: Optional[date] = None, hasta: Optional[date] = None,
+             db: Session = Depends(get_db),
+             empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = _resolver_rango(desde, hasta)
-    return svc.cobranza(db, d, h)
+    return svc.cobranza(db, d, h, empresa_id)
 
 
 @router.get("/gastos")
-def gastos(desde: Optional[date] = None, hasta: Optional[date] = None, db: Session = Depends(get_db)):
+def gastos(desde: Optional[date] = None, hasta: Optional[date] = None,
+           db: Session = Depends(get_db),
+           empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = _resolver_rango(desde, hasta)
-    return svc.gastos_kpi(db, d, h)
+    return svc.gastos_kpi(db, d, h, empresa_id)
 
 
 @router.get("/ventas")
-def ventas(desde: Optional[date] = None, hasta: Optional[date] = None, db: Session = Depends(get_db)):
+def ventas(desde: Optional[date] = None, hasta: Optional[date] = None,
+           db: Session = Depends(get_db),
+           empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = _resolver_rango(desde, hasta)
-    return svc.ventas_kpi(db, d, h)
+    return svc.ventas_kpi(db, d, h, empresa_id)
 
 
 @router.get("/evolucion")
-def evolucion(meses: int = 6, db: Session = Depends(get_db)):
-    return {"data": svc.evolucion(db, meses)}
+def evolucion(meses: int = 6, db: Session = Depends(get_db),
+              empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return {"data": svc.evolucion(db, meses, empresa_id)}
 
 
 @router.get("/salud-general")
-def salud_general(desde: Optional[date] = None, hasta: Optional[date] = None, db: Session = Depends(get_db)):
+def salud_general(desde: Optional[date] = None, hasta: Optional[date] = None,
+                  db: Session = Depends(get_db),
+                  empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = _resolver_rango(desde, hasta)
-    return svc.salud_general(db, d, h)
+    return svc.salud_general(db, d, h, empresa_id)
 
 
 def _resolver_periodo(periodo: str) -> str:
@@ -81,45 +96,53 @@ def _resolver_periodo(periodo: str) -> str:
 
 
 @router.get("/detalle/ventas")
-def detalle_ventas(periodo: str = "mes", db: Session = Depends(get_db)):
+def detalle_ventas(periodo: str = "mes", db: Session = Depends(get_db),
+                   empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = svc.rango_simple(_resolver_periodo(periodo))
-    return {"data": svc.detalle_ventas(db, d, h), "desde": d, "hasta": h}
+    return {"data": svc.detalle_ventas(db, d, h, empresa_id), "desde": d, "hasta": h}
 
 
 @router.get("/detalle/gastos")
-def detalle_gastos(periodo: str = "mes", db: Session = Depends(get_db)):
+def detalle_gastos(periodo: str = "mes", db: Session = Depends(get_db),
+                   empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = svc.rango_simple(_resolver_periodo(periodo))
-    return {"data": svc.detalle_gastos(db, d, h), "desde": d, "hasta": h}
+    return {"data": svc.detalle_gastos(db, d, h, empresa_id), "desde": d, "hasta": h}
 
 
 @router.get("/detalle/ganaste")
-def detalle_ganaste(periodo: str = "mes", db: Session = Depends(get_db)):
+def detalle_ganaste(periodo: str = "mes", db: Session = Depends(get_db),
+                    empresa_id: Optional[int] = Depends(get_empresa_id)):
     d, h = svc.rango_simple(_resolver_periodo(periodo))
-    return {**svc.detalle_ganaste(db, d, h), "desde": d, "hasta": h}
+    return {**svc.detalle_ganaste(db, d, h, empresa_id), "desde": d, "hasta": h}
 
 
 @router.get("/detalle/te-deben")
-def detalle_te_deben(db: Session = Depends(get_db)):
-    return {"data": svc.detalle_te_deben(db)}
+def detalle_te_deben(db: Session = Depends(get_db),
+                     empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return {"data": svc.detalle_te_deben(db, empresa_id)}
 
 
 @router.get("/detalle/en-banco")
-def detalle_en_banco(db: Session = Depends(get_db)):
-    return {"data": svc.detalle_en_banco(db)}
+def detalle_en_banco(db: Session = Depends(get_db),
+                     empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return {"data": svc.detalle_en_banco(db, empresa_id=empresa_id)}
 
 
 @router.get("/detalle/debes-pagar")
-def detalle_debes_pagar(db: Session = Depends(get_db)):
-    return {"data": svc.detalle_debes_pagar(db)}
+def detalle_debes_pagar(db: Session = Depends(get_db),
+                        empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return {"data": svc.detalle_debes_pagar(db, empresa_id)}
 
 
 @router.get("/exportar")
-def exportar(desde: Optional[date] = None, hasta: Optional[date] = None, db: Session = Depends(get_db)):
+def exportar(desde: Optional[date] = None, hasta: Optional[date] = None,
+             db: Session = Depends(get_db),
+             empresa_id: Optional[int] = Depends(get_empresa_id)):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
 
     d, h = _resolver_rango(desde, hasta)
-    filas = svc.filas_exportar(db, d, h)
+    filas = svc.filas_exportar(db, d, h, empresa_id)
 
     wb = Workbook()
     ws = wb.active

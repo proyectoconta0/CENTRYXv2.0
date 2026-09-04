@@ -8,6 +8,7 @@ class AuditoriaLog(Base):
     __tablename__ = "auditoria_logs"
 
     id             = Column(Integer, primary_key=True, index=True)
+    empresa_id     = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     usuario_id     = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     usuario_nombre = Column(String(100))
     modulo         = Column(String(50), index=True)

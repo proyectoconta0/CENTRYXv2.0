@@ -8,7 +8,8 @@ class Cotizacion(Base):
     __tablename__ = "cotizaciones"
 
     id = Column(Integer, primary_key=True, index=True)
-    numero = Column(String(20), unique=True, nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
+    numero = Column(String(20), nullable=False)
     cliente_id = Column(Integer, ForeignKey("clientes.id"))
     tipo_servicio = Column(String(100), nullable=False)
     descripcion = Column(Text)
@@ -25,6 +26,7 @@ class VentaComercial(Base):
     __tablename__ = "ventas_comercial"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
     cotizacion_id = Column(Integer, nullable=True)
     tipo_servicio = Column(String(100))
@@ -138,6 +140,7 @@ class OrdenCobro(Base):
     __tablename__ = "ordenes_cobro"
 
     id               = Column(Integer, primary_key=True, index=True)
+    empresa_id       = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     numero_orden     = Column(String(20), nullable=False, unique=True)   # OC-0001
     cliente_id       = Column(Integer, ForeignKey("clientes.id"), nullable=True)
     ruc_cliente      = Column(String(20), nullable=True)
@@ -175,6 +178,7 @@ class CuentaBancaria(Base):
     __tablename__ = "cuentas_bancarias"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     banco = Column(String(100), nullable=False)
     numero_cuenta = Column(String(50), nullable=False)
     tipo_cuenta = Column(String(50), nullable=True)  # Corriente / Ahorros

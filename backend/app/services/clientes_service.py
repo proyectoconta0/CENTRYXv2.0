@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
 from app.models.models import Cliente
@@ -8,8 +9,11 @@ from fastapi import HTTPException
 
 
 def list_clientes(db: Session, search: str = "", estado: str = "todos",
-                  page: int = 1, per_page: int = 10):
+                  page: int = 1, per_page: int = 10,
+                  empresa_id: Optional[int] = None):
     q = db.query(Cliente)
+    if empresa_id is not None:
+        q = q.filter(Cliente.empresa_id == empresa_id)
     if search:
         term = f"%{search}%"
         q = q.filter(
@@ -27,12 +31,20 @@ def list_clientes(db: Session, search: str = "", estado: str = "todos",
 
     resultado = []
     for c in clientes:
-        total_comprado = db.query(func.sum(VentaComercial.monto)).filter(
+        q_compras = db.query(func.sum(VentaComercial.monto)).filter(
             VentaComercial.cliente_id == c.id
-        ).scalar() or 0
-        ultima = db.query(func.max(VentaComercial.fecha)).filter(
+        )
+        if empresa_id is not None:
+            q_compras = q_compras.filter(VentaComercial.empresa_id == empresa_id)
+        total_comprado = q_compras.scalar() or 0
+
+        q_ultima = db.query(func.max(VentaComercial.fecha)).filter(
             VentaComercial.cliente_id == c.id
-        ).scalar()
+        )
+        if empresa_id is not None:
+            q_ultima = q_ultima.filter(VentaComercial.empresa_id == empresa_id)
+        ultima = q_ultima.scalar()
+
         pendientes = 0
         resultado.append({
             "id": c.id, "razon_social": c.razon_social, "ruc": c.ruc,
@@ -45,16 +57,28 @@ def list_clientes(db: Session, search: str = "", estado: str = "todos",
     return {"total": total, "page": page, "per_page": per_page, "data": resultado}
 
 
-def get_cliente(db: Session, cliente_id: int):
-    c = db.query(Cliente).filter(Cliente.id == cliente_id).first()
+def get_cliente(db: Session, cliente_id: int, empresa_id: Optional[int] = None):
+    q = db.query(Cliente).filter(Cliente.id == cliente_id)
+    if empresa_id is not None:
+        q = q.filter(Cliente.empresa_id == empresa_id)
+    c = q.first()
     if not c:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    total_comprado = db.query(func.sum(VentaComercial.monto)).filter(
+
+    q_compras = db.query(func.sum(VentaComercial.monto)).filter(
         VentaComercial.cliente_id == c.id
-    ).scalar() or 0
-    ultima = db.query(func.max(VentaComercial.fecha)).filter(
+    )
+    if empresa_id is not None:
+        q_compras = q_compras.filter(VentaComercial.empresa_id == empresa_id)
+    total_comprado = q_compras.scalar() or 0
+
+    q_ultima = db.query(func.max(VentaComercial.fecha)).filter(
         VentaComercial.cliente_id == c.id
-    ).scalar()
+    )
+    if empresa_id is not None:
+        q_ultima = q_ultima.filter(VentaComercial.empresa_id == empresa_id)
+    ultima = q_ultima.scalar()
+
     pendientes = 0
     return {
         "id": c.id, "razon_social": c.razon_social, "ruc": c.ruc,
@@ -73,8 +97,13 @@ def get_cliente(db: Session, cliente_id: int):
     }
 
 
-def create_cliente(db: Session, data: ClienteCreate, usuario_nombre: str = None):
-    existing = db.query(Cliente).filter(Cliente.ruc == data.ruc).first()
+def create_cliente(db: Session, data: ClienteCreate, usuario_nombre: str = None,
+                   empresa_id: Optional[int] = None):
+    # Unicidad de RUC por empresa
+    q_dup = db.query(Cliente).filter(Cliente.ruc == data.ruc)
+    if empresa_id is not None:
+        q_dup = q_dup.filter(Cliente.empresa_id == empresa_id)
+    existing = q_dup.first()
     if existing:
         raise HTTPException(
             status_code=400,
@@ -84,42 +113,52 @@ def create_cliente(db: Session, data: ClienteCreate, usuario_nombre: str = None)
     c.creado_por = usuario_nombre
     c.creado_en  = datetime.utcnow()
     c.metodo_creacion = "Manual"
+    c.empresa_id = empresa_id
     db.add(c)
     db.commit()
     db.refresh(c)
-    return get_cliente(db, c.id)
+    return get_cliente(db, c.id, empresa_id)
 
 
-def update_cliente(db: Session, cliente_id: int, data: ClienteUpdate, usuario_nombre: str = None):
-    c = db.query(Cliente).filter(Cliente.id == cliente_id).first()
+def update_cliente(db: Session, cliente_id: int, data: ClienteUpdate,
+                   usuario_nombre: str = None, empresa_id: Optional[int] = None):
+    q = db.query(Cliente).filter(Cliente.id == cliente_id)
+    if empresa_id is not None:
+        q = q.filter(Cliente.empresa_id == empresa_id)
+    c = q.first()
     if not c:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     if data.ruc and data.ruc != c.ruc:
-        existing = db.query(Cliente).filter(
+        q_dup = db.query(Cliente).filter(
             Cliente.ruc == data.ruc, Cliente.id != cliente_id
-        ).first()
-        if existing:
+        )
+        if empresa_id is not None:
+            q_dup = q_dup.filter(Cliente.empresa_id == empresa_id)
+        if q_dup.first():
             raise HTTPException(
                 status_code=400,
-                detail=f"Ya existe un cliente registrado con este RUC: {existing.razon_social}"
+                detail=f"Ya existe un cliente registrado con este RUC: {data.ruc}"
             )
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(c, k, v)
     c.modificado_por = usuario_nombre
     c.modificado_en  = datetime.utcnow()
     db.commit()
-    return get_cliente(db, c.id)
+    return get_cliente(db, cliente_id, empresa_id)
 
 
-def delete_cliente(db: Session, cliente_id: int):
-    c = db.query(Cliente).filter(Cliente.id == cliente_id).first()
+def delete_cliente(db: Session, cliente_id: int, empresa_id: Optional[int] = None):
+    q = db.query(Cliente).filter(Cliente.id == cliente_id)
+    if empresa_id is not None:
+        q = q.filter(Cliente.empresa_id == empresa_id)
+    c = q.first()
     if not c:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    tiene_ventas = db.query(VentaComercial).filter(
-        VentaComercial.cliente_id == cliente_id
-    ).first()
-    if tiene_ventas:
+    q_ventas = db.query(VentaComercial).filter(VentaComercial.cliente_id == cliente_id)
+    if empresa_id is not None:
+        q_ventas = q_ventas.filter(VentaComercial.empresa_id == empresa_id)
+    if q_ventas.first():
         raise HTTPException(
             status_code=400,
             detail="No se puede eliminar el cliente porque tiene comprobantes "
@@ -131,10 +170,17 @@ def delete_cliente(db: Session, cliente_id: int):
     return {"mensaje": "Cliente eliminado correctamente"}
 
 
-def get_historial(db: Session, cliente_id: int):
-    ventas = db.query(VentaComercial).filter(
-        VentaComercial.cliente_id == cliente_id
-    ).order_by(VentaComercial.fecha.desc()).all()
+def get_historial(db: Session, cliente_id: int, empresa_id: Optional[int] = None):
+    # Verificar que el cliente pertenece a la empresa
+    if empresa_id is not None:
+        c = db.query(Cliente).filter(Cliente.id == cliente_id, Cliente.empresa_id == empresa_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    q = db.query(VentaComercial).filter(VentaComercial.cliente_id == cliente_id)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    ventas = q.order_by(VentaComercial.fecha.desc()).all()
     return [
         {
             "id": v.id, "tipo_servicio": v.tipo_servicio, "descripcion": v.descripcion,

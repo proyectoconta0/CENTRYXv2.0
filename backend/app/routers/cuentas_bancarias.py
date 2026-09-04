@@ -1,9 +1,11 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
 from app.models.comercial import CuentaBancaria
+from app.core.security import get_empresa_id
 from pydantic import BaseModel
-from typing import Optional
+
 
 router = APIRouter()
 
@@ -31,18 +33,28 @@ def _serialize(c: CuentaBancaria) -> dict:
 
 
 @router.get("")
-def listar(db: Session = Depends(get_db)):
-    cuentas = db.query(CuentaBancaria).filter(CuentaBancaria.activo == True).order_by(CuentaBancaria.banco).all()
-    return [_serialize(c) for c in cuentas]
+def listar(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(CuentaBancaria).filter(CuentaBancaria.activo == True)
+    if empresa_id is not None:
+        q = q.filter(CuentaBancaria.empresa_id == empresa_id)
+    return [_serialize(c) for c in q.order_by(CuentaBancaria.banco).all()]
 
 
 @router.post("")
-def crear(data: CuentaBancariaCreate, db: Session = Depends(get_db)):
+def crear(
+    data: CuentaBancariaCreate,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if not data.banco.strip():
         raise HTTPException(400, "El banco es requerido")
     if not data.numero_cuenta.strip():
         raise HTTPException(400, "El número de cuenta es requerido")
     cuenta = CuentaBancaria(
+        empresa_id    = empresa_id,
         banco         = data.banco.strip(),
         numero_cuenta = data.numero_cuenta.strip(),
         tipo_cuenta   = data.tipo_cuenta,
@@ -55,8 +67,16 @@ def crear(data: CuentaBancariaCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/{cuenta_id}")
-def actualizar(cuenta_id: int, data: CuentaBancariaUpdate, db: Session = Depends(get_db)):
-    cuenta = db.query(CuentaBancaria).filter(CuentaBancaria.id == cuenta_id).first()
+def actualizar(
+    cuenta_id: int,
+    data: CuentaBancariaUpdate,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(CuentaBancaria).filter(CuentaBancaria.id == cuenta_id)
+    if empresa_id is not None:
+        q = q.filter(CuentaBancaria.empresa_id == empresa_id)
+    cuenta = q.first()
     if not cuenta:
         raise HTTPException(404, "Cuenta no encontrada")
     if not data.banco.strip():
@@ -72,8 +92,15 @@ def actualizar(cuenta_id: int, data: CuentaBancariaUpdate, db: Session = Depends
 
 
 @router.delete("/{cuenta_id}")
-def eliminar(cuenta_id: int, db: Session = Depends(get_db)):
-    cuenta = db.query(CuentaBancaria).filter(CuentaBancaria.id == cuenta_id).first()
+def eliminar(
+    cuenta_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(CuentaBancaria).filter(CuentaBancaria.id == cuenta_id)
+    if empresa_id is not None:
+        q = q.filter(CuentaBancaria.empresa_id == empresa_id)
+    cuenta = q.first()
     if not cuenta:
         raise HTTPException(404, "Cuenta no encontrada")
     cuenta.activo = False

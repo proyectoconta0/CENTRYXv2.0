@@ -18,7 +18,7 @@ import pdfplumber
 from app.models.models import Gasto, ProveedorGasto, PagoGasto, Proveedor, Usuario, LoteDetraccion, OrdenPago, LoteDetraccionDetalle, OrdenPagoDetalle, PagoGarantia, Garantia, Prestamo, CuotaPrestamo, MovimientoCaja
 from app.models.comercial import CuentaBancaria
 from app.models.configuracion import ConfiguracionEmpresa
-from app.core.security import get_current_usuario
+from app.core.security import get_current_usuario, get_empresa_id
 from app.services.comprobante_print import construir_payload_impresion
 from app.services.conciliacion_service import limpiar_movimiento_sistema_por_pago
 from app.services.auditoria_service import registrar_log, ip_de
@@ -29,10 +29,6 @@ router = APIRouter()
 UPLOAD_BASE_GASTOS = Path("uploads/gastos_comprobantes")
 ALLOWED_EXT_GASTOS  = {".pdf", ".jpg", ".jpeg", ".png"}
 
-# Tipos de comprobante de gasto para los que se conserva el PDF original del
-# proveedor (se puede reimprimir tal cual). El resto (Recibo Interno, Gastos
-# Bancarios, Anticipo de Proveedor, etc.) siempre se genera con la plantilla
-# del sistema al imprimir, así que su comprobante_path se deja en None.
 TIPOS_CON_PDF_GASTO = {
     "Factura",
     "Nota de Crédito",
@@ -47,10 +43,6 @@ MESES_ES = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
 MESES_LARGOS_ES = {1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
                     7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"}
 
-# "Pagos Tributarios" (IGV, Impuesto a la Renta, etc.) sale del banco pero no
-# es un gasto operativo: no debe sumar a la utilidad ni al "Total de Gastos"
-# del Dashboard/Indicadores, aunque sí debe seguir viéndose en la lista,
-# Cuentas por Pagar y conciliación bancaria.
 CATEGORIA_NO_AFECTA_UTILIDAD = "Pagos Tributarios"
 
 
@@ -112,15 +104,10 @@ def _serialize(g: Gasto) -> dict:
     }
 
 
-TOLERANCIA_REDONDEO = 5.00  # S/ 5.00 máximo — mismo criterio que Cobranza (ver cobranza.py)
+TOLERANCIA_REDONDEO = 5.00
 
 COMPROBANTES_CON_IGV = {"Factura", "Recibo de Servicios Públicos", "Boleta de Venta"}
 
-# Tipos de comprobante para los que se conserva el código de detracción
-# (bien/servicio de la tabla SUNAT) al guardar el gasto. Recibo por Honorarios
-# no aplica detracción (SPOT): tiene retención de renta de 4ta categoría, un
-# régimen tributario distinto — ver _calcular_detraccion_gasto, restringido
-# a "Factura", y el cálculo de retención del 8% en _extraer_datos_pdf_gasto.
 TIPOS_CON_CODIGO_DETRACCION = {"Factura"}
 
 
@@ -148,9 +135,6 @@ def _semaforo_gasto(g: Gasto) -> str:
 
 
 def _serialize_cpp(g: Gasto) -> dict:
-    # Reutiliza _serialize (misma forma que "Lista de Gastos") y le agrega los
-    # campos propios de Cuentas por Pagar (semáforo, días de mora) — el tab
-    # "Cuentas por Pagar" del frontend fusiona ambas vistas en una sola tabla.
     hoy_d     = date.today()
     dias_venc = 0
     if g.fecha_vencimiento and g.estado_pago != "Pagado":
@@ -178,7 +162,6 @@ def _recalcular_pago_gasto(db: Session, g: Gasto):
 
 
 def _fecha_limite_detraccion(fecha_emision: date) -> date:
-    # Día 5 del mes siguiente a la emisión.
     mes, anio = fecha_emision.month + 1, fecha_emision.year
     if mes > 12:
         mes, anio = 1, anio + 1
@@ -188,8 +171,6 @@ def _fecha_limite_detraccion(fecha_emision: date) -> date:
 def _calcular_detraccion_gasto(tipo_comprobante: Optional[str], tiene_detraccion: bool, tasa: Optional[float],
                                 total: Optional[float], fecha_emision: Optional[date],
                                 fecha_limite_manual: Optional[date]):
-    """Solo aplica cuando Tipo Comprobante = Factura. Devuelve
-    (tiene, tasa, monto_detraccion, monto_neto_pagar, fecha_limite)."""
     if not tiene_detraccion or tipo_comprobante != "Factura" or not tasa or not total:
         return False, None, None, None, None
     monto_det  = round(total * (tasa / 100))
@@ -205,8 +186,6 @@ def _periodo_label(mes: Optional[int], anio: Optional[int]) -> Optional[str]:
 
 
 def _semaforo_tributario(g: Gasto) -> str:
-    # A diferencia de _semaforo_gasto (que mide mora, hacia atrás), este mide
-    # urgencia hacia adelante: cuántos días faltan para la fecha límite SUNAT.
     if g.estado_pago == "Pagado":
         return "pagado"
     if not g.fecha_vencimiento:
@@ -248,11 +227,11 @@ def _serialize_tributario(db: Session, g: Gasto) -> dict:
     }
 
 
-def _upsert_proveedor(db: Session, tipo_doc: Optional[str], num_doc: Optional[str], nombre: Optional[str]) -> Optional[int]:
+def _upsert_proveedor(db: Session, tipo_doc: Optional[str], num_doc: Optional[str], nombre: Optional[str],
+                      empresa_id: Optional[int] = None) -> Optional[int]:
     if not num_doc or not nombre:
         return None
 
-    # Tabla legacy (autocompletado del campo "Proveedor" en Nuevo Gasto)
     existing = db.query(ProveedorGasto).filter(ProveedorGasto.numero_documento == num_doc).first()
     if existing:
         if existing.nombre_proveedor != nombre:
@@ -267,8 +246,10 @@ def _upsert_proveedor(db: Session, tipo_doc: Optional[str], num_doc: Optional[st
             updated_at=date.today(),
         ))
 
-    # Tabla proveedores (Módulo 7) — se usa para vincular el gasto via proveedor_id
-    prov = db.query(Proveedor).filter(Proveedor.numero_documento == num_doc).first()
+    q_prov = db.query(Proveedor).filter(Proveedor.numero_documento == num_doc)
+    if empresa_id is not None:
+        q_prov = q_prov.filter(Proveedor.empresa_id == empresa_id)
+    prov = q_prov.first()
     if prov:
         if prov.razon_social != nombre:
             prov.razon_social = nombre
@@ -279,6 +260,7 @@ def _upsert_proveedor(db: Session, tipo_doc: Optional[str], num_doc: Optional[st
             numero_documento=num_doc,
             razon_social=nombre,
             estado="Activo",
+            empresa_id=empresa_id,
             created_at=date.today(),
             updated_at=date.today(),
         )
@@ -287,11 +269,14 @@ def _upsert_proveedor(db: Session, tipo_doc: Optional[str], num_doc: Optional[st
     return prov.id
 
 
-def _proximo_ri(db: Session) -> str:
-    rows = db.query(Gasto.numero_comprobante).filter(
+def _proximo_ri(db: Session, empresa_id: Optional[int] = None) -> str:
+    q = db.query(Gasto.numero_comprobante).filter(
         Gasto.tipo_comprobante == "Recibo Interno",
         Gasto.numero_comprobante.isnot(None),
-    ).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    rows = q.all()
     max_num = 0
     for (nc,) in rows:
         if nc and nc.upper().startswith("RI-"):
@@ -304,11 +289,14 @@ def _proximo_ri(db: Session) -> str:
     return f"RI-{max_num + 1:04d}"
 
 
-def _proximo_gb(db: Session) -> str:
-    rows = db.query(Gasto.numero_comprobante).filter(
+def _proximo_gb(db: Session, empresa_id: Optional[int] = None) -> str:
+    q = db.query(Gasto.numero_comprobante).filter(
         Gasto.tipo_comprobante == "Gastos Bancarios",
         Gasto.numero_comprobante.isnot(None),
-    ).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    rows = q.all()
     max_num = 0
     for (nc,) in rows:
         if nc and nc.upper().startswith("GB-"):
@@ -321,11 +309,14 @@ def _proximo_gb(db: Session) -> str:
     return f"GB-{max_num + 1:04d}"
 
 
-def _proximo_ap(db: Session) -> str:
-    rows = db.query(Gasto.numero_comprobante).filter(
+def _proximo_ap(db: Session, empresa_id: Optional[int] = None) -> str:
+    q = db.query(Gasto.numero_comprobante).filter(
         Gasto.tipo_comprobante == "Anticipo de Proveedor",
         Gasto.numero_comprobante.isnot(None),
-    ).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    rows = q.all()
     max_num = 0
     for (nc,) in rows:
         if nc and nc.upper().startswith("AP-"):
@@ -359,20 +350,14 @@ class GastoCreate(BaseModel):
     periodo_mes:        Optional[int] = None
     periodo_anio:       Optional[int] = None
     observaciones:      Optional[str] = None
-    # Detracción (solo Facturas de proveedor) — monto_detraccion/monto_neto_pagar
-    # se calculan en el servidor, no se reciben del cliente.
     tiene_detraccion:        bool = False
     concepto_detraccion:     Optional[str] = None
     tasa_detraccion:         Optional[float] = None
     ruc_cuenta_detraccion:   Optional[str] = None
     fecha_limite_detraccion: Optional[date] = None
     codigo_detraccion:       Optional[str] = None
-    # Referencia al PDF original, staged en TMP_ZIP_DIR_GASTOS por
-    # importar-zip — solo se usa desde importar-zip/confirmar (ver _crear_gasto).
     archivo_temp:   Optional[str] = None
     archivo_nombre: Optional[str] = None
-    # "Manual" | "Importación PDF" | "Importación ZIP" — si no se especifica,
-    # _crear_gasto lo infiere (ver más abajo).
     metodo_creacion: Optional[str] = None
 
 
@@ -436,8 +421,11 @@ def listar_gastos(
     page:             int            = 1,
     per_page:         int            = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(Gasto)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if solo_recurrentes:
         q = q.filter(Gasto.es_recurrente == True)
     if search:
@@ -459,45 +447,57 @@ def listar_gastos(
 # ── Resumen KPIs ────────────────────────────────────────────────────────────────
 
 @router.get("/resumen")
-def resumen_gastos(db: Session = Depends(get_db)):
+def resumen_gastos(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     hoy  = date.today()
     mes  = hoy.month
     anio = hoy.year
     mes_ant  = mes  - 1 if mes  > 1 else 12
     anio_ant = anio     if mes  > 1 else anio - 1
 
-    # "Pagos Tributarios" (afecta_utilidad=False) no cuenta como gasto
-    # operativo: se excluye de estos totales (sigue viéndose en la lista,
-    # CxP y exportación de detalle).
-    total_mes = float(db.query(func.sum(Gasto.monto)).filter(
+    q_mes = db.query(func.sum(Gasto.monto)).filter(
         extract("month", Gasto.fecha) == mes,
         extract("year",  Gasto.fecha) == anio,
         Gasto.afecta_utilidad.isnot(False),
-    ).scalar() or 0)
+    )
+    if empresa_id is not None:
+        q_mes = q_mes.filter(Gasto.empresa_id == empresa_id)
+    total_mes = float(q_mes.scalar() or 0)
 
-    total_mes_ant = float(db.query(func.sum(Gasto.monto)).filter(
+    q_mes_ant = db.query(func.sum(Gasto.monto)).filter(
         extract("month", Gasto.fecha) == mes_ant,
         extract("year",  Gasto.fecha) == anio_ant,
         Gasto.afecta_utilidad.isnot(False),
-    ).scalar() or 0)
+    )
+    if empresa_id is not None:
+        q_mes_ant = q_mes_ant.filter(Gasto.empresa_id == empresa_id)
+    total_mes_ant = float(q_mes_ant.scalar() or 0)
 
-    top = db.query(
+    q_top = db.query(
         Gasto.categoria,
         func.sum(Gasto.monto).label("total")
     ).filter(
         extract("month", Gasto.fecha) == mes,
         extract("year",  Gasto.fecha) == anio,
         Gasto.afecta_utilidad.isnot(False),
-    ).group_by(Gasto.categoria).order_by(text("total DESC")).first()
+    )
+    if empresa_id is not None:
+        q_top = q_top.filter(Gasto.empresa_id == empresa_id)
+    top = q_top.group_by(Gasto.categoria).order_by(text("total DESC")).first()
 
     variacion = 0.0
     if total_mes_ant > 0:
         variacion = round(((total_mes - total_mes_ant) / total_mes_ant) * 100, 1)
 
-    total_anio = float(db.query(func.sum(Gasto.monto)).filter(
+    q_anio = db.query(func.sum(Gasto.monto)).filter(
         extract("year", Gasto.fecha) == anio,
         Gasto.afecta_utilidad.isnot(False),
-    ).scalar() or 0)
+    )
+    if empresa_id is not None:
+        q_anio = q_anio.filter(Gasto.empresa_id == empresa_id)
+    total_anio = float(q_anio.scalar() or 0)
 
     return {
         "total_mes":      round(total_mes, 2),
@@ -515,19 +515,23 @@ def por_categoria(
     mes:  Optional[int] = None,
     anio: Optional[int] = None,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     hoy = date.today()
     m = mes  or hoy.month
     a = anio or hoy.year
 
-    rows = db.query(
+    q = db.query(
         Gasto.categoria,
         func.sum(Gasto.monto).label("total")
     ).filter(
         extract("month", Gasto.fecha) == m,
         extract("year",  Gasto.fecha) == a,
         Gasto.afecta_utilidad.isnot(False),
-    ).group_by(Gasto.categoria).order_by(text("total DESC")).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    rows = q.group_by(Gasto.categoria).order_by(text("total DESC")).all()
 
     total = sum(float(r[1]) for r in rows) or 1
     return [
@@ -539,18 +543,24 @@ def por_categoria(
 # ── Evolución mensual ────────────────────────────────────────────────────────────
 
 @router.get("/evolucion-mensual")
-def evolucion_mensual(db: Session = Depends(get_db)):
+def evolucion_mensual(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     hoy = date.today()
     resultado = []
     for i in range(5, -1, -1):
         offset = hoy.month - i - 1
         m = offset % 12 + 1
         a = hoy.year + (offset // 12)
-        total = float(db.query(func.sum(Gasto.monto)).filter(
+        q = db.query(func.sum(Gasto.monto)).filter(
             extract("month", Gasto.fecha) == m,
             extract("year",  Gasto.fecha) == a,
             Gasto.afecta_utilidad.isnot(False),
-        ).scalar() or 0)
+        )
+        if empresa_id is not None:
+            q = q.filter(Gasto.empresa_id == empresa_id)
+        total = float(q.scalar() or 0)
         resultado.append({"mes": MESES_ES[m], "anio": a, "total": round(total, 2)})
     return resultado
 
@@ -558,15 +568,21 @@ def evolucion_mensual(db: Session = Depends(get_db)):
 # ── Reporte por área ─────────────────────────────────────────────────────────────
 
 @router.get("/por-area")
-def por_area(db: Session = Depends(get_db)):
+def por_area(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     hoy = date.today()
-    rows = db.query(
+    q = db.query(
         Gasto.area,
         func.sum(Gasto.monto).label("total")
     ).filter(
         extract("year", Gasto.fecha) == hoy.year,
         Gasto.afecta_utilidad.isnot(False),
-    ).group_by(Gasto.area).order_by(text("total DESC")).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    rows = q.group_by(Gasto.area).order_by(text("total DESC")).all()
 
     total = sum(float(r[1]) for r in rows) or 1
     return [
@@ -578,12 +594,16 @@ def por_area(db: Session = Depends(get_db)):
 # ── Próximo correlativo ─────────────────────────────────────────────────────────
 
 @router.get("/proximo-correlativo")
-def proximo_correlativo(tipo: str = "RI", db: Session = Depends(get_db)):
+def proximo_correlativo(
+    tipo: str = "RI",
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if tipo == "GB":
-        return {"proximo": _proximo_gb(db)}
+        return {"proximo": _proximo_gb(db, empresa_id)}
     if tipo == "AP":
-        return {"proximo": _proximo_ap(db)}
-    return {"proximo": _proximo_ri(db)}
+        return {"proximo": _proximo_ap(db, empresa_id)}
+    return {"proximo": _proximo_ri(db, empresa_id)}
 
 
 # ── Exportar Excel ───────────────────────────────────────────────────────────────
@@ -596,6 +616,7 @@ def exportar_gastos(
     area:               str            = "",
     tipos_comprobante:  str            = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     try:
         from openpyxl import Workbook
@@ -604,6 +625,8 @@ def exportar_gastos(
         raise HTTPException(500, "Instale openpyxl: pip install openpyxl")
 
     q = db.query(Gasto)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if desde:     q = q.filter(Gasto.fecha >= desde)
     if hasta:     q = q.filter(Gasto.fecha <= hasta)
     if categoria: q = q.filter(Gasto.categoria == categoria)
@@ -672,10 +695,7 @@ def exportar_gastos(
                 ws.cell(row=ri, column=ci).fill = alt_fill
         ri += 1
 
-    # Sección de totales al final: separa lo que sí afecta la utilidad
-    # (gastos operativos, incluida "Planilla") de lo que no ("Pagos
-    # Tributarios" — sale del banco pero no es gasto operativo).
-    ri += 1  # fila en blanco
+    ri += 1
     total_fill = PatternFill(start_color="F3F4F6", end_color="F3F4F6", fill_type="solid")
     total_font = Font(bold=True)
     resumen_filas = [
@@ -707,23 +727,23 @@ def exportar_gastos(
 
 @router.post("")
 def crear_gasto(data: GastoCreate, http_request: Request, db: Session = Depends(get_db),
-                 usuario: Usuario = Depends(get_current_usuario)):
-    return _crear_gasto(data, http_request, db, usuario)
+                 usuario: Usuario = Depends(get_current_usuario),
+                 empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return _crear_gasto(data, http_request, db, usuario, empresa_id)
 
 
-def _crear_gasto(data: GastoCreate, http_request: Request, db: Session, usuario: Usuario) -> dict:
-    """Lógica de creación de un gasto, compartida por el endpoint POST /gastos
-    y por la confirmación de importación masiva (POST /gastos/importar-zip/confirmar)."""
+def _crear_gasto(data: GastoCreate, http_request: Request, db: Session, usuario: Usuario,
+                 empresa_id: Optional[int] = None) -> dict:
     if data.monto <= 0:
         raise HTTPException(400, "El monto debe ser mayor a 0")
 
     numero = data.numero_comprobante
     if data.tipo_comprobante == "Recibo Interno" and not numero:
-        numero = _proximo_ri(db)
+        numero = _proximo_ri(db, empresa_id)
     elif data.tipo_comprobante == "Gastos Bancarios" and not numero:
-        numero = _proximo_gb(db)
+        numero = _proximo_gb(db, empresa_id)
     elif data.tipo_comprobante == "Anticipo de Proveedor" and not numero:
-        numero = _proximo_ap(db)
+        numero = _proximo_ap(db, empresa_id)
 
     es_anticipo = data.tipo_comprobante == "Anticipo de Proveedor"
 
@@ -733,7 +753,7 @@ def _crear_gasto(data: GastoCreate, http_request: Request, db: Session, usuario:
     monto_orig = monto_r if moneda == "USD" else None
     m_soles    = round(monto_r * tc, 2) if moneda == "USD" and tc else monto_r
     base, igv  = _calcular_impuestos(m_soles, data.tipo_comprobante)
-    monto_bd   = m_soles  # siempre guardamos en soles en el campo monto principal
+    monto_bd   = m_soles
 
     tiene_det, tasa_det, monto_det, monto_neto, fecha_lim_det = _calcular_detraccion_gasto(
         data.tipo_comprobante, data.tiene_detraccion, data.tasa_detraccion, monto_bd,
@@ -754,7 +774,6 @@ def _crear_gasto(data: GastoCreate, http_request: Request, db: Session, usuario:
         tipo_documento=data.tipo_documento or None,
         numero_documento=data.numero_documento or None,
         fecha_vencimiento=data.fecha_vencimiento or None,
-        # Los anticipos de proveedor ya fueron pagados por adelantado: no generan cuenta por pagar.
         saldo_pendiente=None if es_anticipo else monto_bd,
         estado_pago=None if es_anticipo else "Pendiente",
         created_at=date.today(),
@@ -780,16 +799,13 @@ def _crear_gasto(data: GastoCreate, http_request: Request, db: Session, usuario:
         creado_por=usuario.nombre,
         creado_en=datetime.utcnow(),
         metodo_creacion=data.metodo_creacion or ("Importación ZIP" if data.archivo_temp else "Manual"),
+        empresa_id=empresa_id,
     )
     db.add(g)
-    g.proveedor_id = _upsert_proveedor(db, data.tipo_documento, data.numero_documento, data.proveedor)
+    g.proveedor_id = _upsert_proveedor(db, data.tipo_documento, data.numero_documento, data.proveedor, empresa_id)
     db.commit()
     db.refresh(g)
 
-    # Si el gasto viene de importar-zip/confirmar, el PDF original quedó
-    # staged en TMP_ZIP_DIR_GASTOS por importar-zip. Solo se conserva como
-    # comprobante_path para los tipos de documento que sí guardan el PDF
-    # original (TIPOS_CON_PDF_GASTO); para el resto se descarta el archivo.
     if data.archivo_temp:
         origen = TMP_ZIP_DIR_GASTOS / Path(data.archivo_temp).name
         if origen.is_file():
@@ -813,29 +829,15 @@ def _crear_gasto(data: GastoCreate, http_request: Request, db: Session, usuario:
 
     return _serialize(g)
 
-
 # ── Importación de PDF (facturas/boletas de proveedor) ─────────────────────────
-# Mismo patrón que la importación de comprobantes SUNAT en Ventas
-# (app/routers/comprobantes.py): pdfplumber + regex, sin microservicio aparte.
-# La diferencia clave es a quién se identifica: aquí el PDF es una factura QUE
-# NOS EMITE un proveedor, así que el RUC/razón social a extraer es el del
-# EMISOR (encabezado del documento), no el que aparece junto a
-# "Señor(es)/Cliente" (que en este caso somos nosotros, el comprador).
 
 TAMANO_MAXIMO_PDF_GASTO = 10 * 1024 * 1024
 TAMANO_MAXIMO_ZIP_GASTO = 50 * 1024 * 1024
 MAX_PDFS_POR_ZIP_GASTO  = 100
 
-# Staging temporal para los PDFs extraídos de un ZIP: importar-zip solo
-# previsualiza los datos (todavía no existe ningún Gasto), así que el archivo
-# original se guarda aquí con un nombre único y se recupera recién en
-# importar-zip/confirmar, cuando ya se conoce el id del gasto creado.
 TMP_ZIP_DIR_GASTOS = Path("uploads/gastos_comprobantes/_tmp_zip")
 
 _PATRONES_TIPO_GASTO = [
-    # Debe ir antes que "Factura": un Recibo por Honorarios Electrónico
-    # también podría contener el texto "ELECTRONICA" en otra parte del PDF,
-    # así que el patrón más específico se evalúa primero.
     ("Recibo por Honorarios", r'RECIBO\s+POR\s+HONORARIOS\s+ELECTR[OÓ]NICO'),
     ("Boleta de Venta",       r'BOLETA\s+DE\s+VENTA'),
     ("Factura",               r'FACTURA\s+ELECTR[OÓ]NICA'),
@@ -853,8 +855,11 @@ _CAMPOS_CLAVE_GASTO = [
 ]
 
 
-def _ruc_empresa_propia(db: Session) -> Optional[str]:
-    cfg = db.query(ConfiguracionEmpresa).first()
+def _ruc_empresa_propia(db: Session, empresa_id: Optional[int] = None) -> Optional[str]:
+    q = db.query(ConfiguracionEmpresa)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionEmpresa.id == empresa_id)
+    cfg = q.first()
     return cfg.ruc if cfg and cfg.ruc else None
 
 
@@ -883,11 +888,6 @@ _SUFIJO_SOCIETARIO = r'(?:S\.?\s?A\.?\s?C\.?|S\.?\s?A\.?\s?A\.?|S\.?\s?R\.?\s?L\
 
 
 def _extraer_razon_social_con_sufijo(segmento: str) -> Optional[str]:
-    """Busca la razón social del proveedor por su sufijo societario
-    (S.A.C., S.A.A., S.R.L., E.I.R.L., S.A.), que en las facturas
-    electrónicas peruanas casi siempre acompaña el nombre del emisor,
-    en el tramo de texto anterior al "RUC:" del encabezado.
-    """
     matches = list(re.finditer(
         r'([A-ZÁÉÍÓÚÑ0-9][A-ZÁÉÍÓÚÑ0-9\s&,\.\-]{2,100}?' + _SUFIJO_SOCIETARIO + r')(?=\s|,|\n|$)',
         segmento, re.IGNORECASE,
@@ -898,13 +898,6 @@ def _extraer_razon_social_con_sufijo(segmento: str) -> Optional[str]:
 
 
 def _extraer_emisor_gasto(texto: str, ruc_propio: Optional[str]):
-    """Extrae el RUC y la razón social del proveedor (emisor del documento).
-
-    El RUC del proveedor va en el encabezado del PDF; el RUC que aparece
-    junto a "Señor(es)/Cliente/Adquiriente" es el de nuestra propia empresa
-    y debe descartarse (lógica inversa a la de Ventas, donde ese RUC sí es
-    el que interesa).
-    """
     matches = list(re.finditer(r'RUC\s*:?\s*(\d{11})', texto, re.IGNORECASE))
     if not matches:
         return None, None
@@ -924,15 +917,10 @@ def _extraer_emisor_gasto(texto: str, ruc_propio: Optional[str]):
 
     ruc = elegido.group(1)
 
-    # 1) Razón social por sufijo societario (S.A.C./S.A.A./S.R.L./E.I.R.L./S.A.)
-    #    en el tramo de texto justo antes del RUC — el patrón más confiable
-    #    en facturas electrónicas SUNAT reales.
     inicio_linea = texto.rfind("\n", 0, elegido.start())
     contexto_previo = texto[max(0, inicio_linea - 200): elegido.start()]
     razon_social = _extraer_razon_social_con_sufijo(contexto_previo)
 
-    # 2) Respaldo: última línea no vacía antes del RUC (encabezados sin
-    #    sufijo societario reconocible, ej. entidades públicas).
     if not razon_social:
         lineas_previas = [l.strip() for l in contexto_previo.split("\n") if l.strip()]
         if lineas_previas:
@@ -942,10 +930,6 @@ def _extraer_emisor_gasto(texto: str, ruc_propio: Optional[str]):
 
 
 def _extraer_emisor_recibo_honorarios(texto: str, ruc_propio: Optional[str]):
-    """Recibo por Honorarios Electrónico: a diferencia de Factura/Boleta, el
-    RUC del emisor no lleva la etiqueta "RUC:" — aparece como un número de
-    11 dígitos "suelto" en la línea previa a su nombre/razón social, justo
-    antes del título del comprobante."""
     m = re.search(r'RECIBO\s+POR\s+HONORARIOS\s+ELECTR[OÓ]NICO', texto, re.IGNORECASE)
     if not m:
         return None, None
@@ -961,9 +945,6 @@ def _extraer_emisor_recibo_honorarios(texto: str, ruc_propio: Optional[str]):
 
 
 def _extraer_ruc_recibo_honorarios_gasto(texto: str, ruc_propio: Optional[str]) -> Optional[str]:
-    """RUC del emisor en Recibo por Honorarios Electrónico: la etiqueta suele
-    venir como "R.U.C." (con puntos), no "RUC:" como en Factura/Boleta, por
-    lo que el patrón genérico de _extraer_emisor_gasto no la reconoce."""
     for m in re.finditer(r'R\.?U\.?C\.?\s*:?\s*(1[0-9]{10})', texto, re.IGNORECASE):
         if m.group(1) != ruc_propio:
             return m.group(1)
@@ -972,12 +953,6 @@ def _extraer_ruc_recibo_honorarios_gasto(texto: str, ruc_propio: Optional[str]) 
 
 def _extraer_ruc_persona_natural_gasto(texto: str, ruc_propio: Optional[str],
                                         limite: Optional[int] = None) -> Optional[str]:
-    """RUC de persona natural (Recibo por Honorarios): siempre inicia con
-    "10" (a diferencia de "20" para empresas), a diferencia de la heurística
-    por posición de línea, no depende de que el RUC esté justo antes del
-    nombre ni de que el texto extraído conserve ese orden. Si se conoce la
-    posición del N° de comprobante (el RUC del emisor aparece antes de
-    este), se prioriza un match anterior a esa posición."""
     if limite is not None:
         for m in re.finditer(r'\b(10\d{9})\b', texto[:limite]):
             if m.group(1) != ruc_propio:
@@ -1010,9 +985,6 @@ _MESES_ES = {
 
 
 def _extraer_fecha_texto_gasto(texto: str, patron: str):
-    """Fechas en formato textual ("08 Abril 2026", "08 de Abril de 2026"),
-    usadas en el Recibo por Honorarios Electrónico en vez del DD/MM/YYYY
-    numérico de Factura/Boleta."""
     m = re.search(patron, texto, re.IGNORECASE)
     if not m:
         return None
@@ -1026,12 +998,6 @@ def _extraer_fecha_texto_gasto(texto: str, patron: str):
 
 
 def _extraer_fecha_libre_es_gasto(texto: str) -> Optional[str]:
-    """Fallback para fecha textual en español del Recibo por Honorarios
-    Electrónico: el formato real es "08 de Abril del 2026" (con "de" entre
-    día y mes, y "del"/"de" entre mes y año), no "08 Abril 2026" como se
-    asumió inicialmente. No se ancla a la etiqueta "FECHA DE EMISIÓN" porque
-    pdfplumber a veces separa la etiqueta y el valor en líneas/columnas
-    distintas."""
     patron = r'(\d{1,2})\s+de\s+(' + '|'.join(_MESES_ES.keys()) + r')\s+del?\s+(\d{4})'
     m = re.search(patron, texto, re.IGNORECASE)
     if not m:
@@ -1057,16 +1023,13 @@ def _extraer_monto_gasto(texto: str, patron: str):
 
 
 def _extraer_total_gasto(texto: str) -> Optional[float]:
-    """Extrae el monto TOTAL del comprobante, con cuidado de no confundirlo
-    con el "SUB TOTAL"/"SUBTOTAL" (que suele aparecer antes en el documento
-    y comparte la palabra "TOTAL")."""
     m = re.search(r'IMPORTE\s+TOTAL\s*:?\s*S?/?\.?\s*([\d,]+\.\d{2})', texto, re.IGNORECASE)
     if not m:
         for candidata in re.finditer(r'\bTOTAL\s*:?\s*S?/?\.?\s*([\d,]+\.\d{2})', texto, re.IGNORECASE):
             precontexto = texto[max(0, candidata.start() - 5): candidata.start()]
             if re.search(r'SUB[\s-]?$', precontexto, re.IGNORECASE):
                 continue
-            m = candidata  # el total general suele ser la última coincidencia válida
+            m = candidata
     if not m:
         return None
     crudo = m.group(1).replace(",", "")
@@ -1077,8 +1040,6 @@ def _extraer_total_gasto(texto: str) -> Optional[float]:
 
 
 def _extraer_total_honorarios_gasto(texto: str) -> Optional[float]:
-    """"Total por honorarios" del Recibo por Honorarios Electrónico: el monto
-    bruto (base imponible) antes de la retención del 8% de renta."""
     return _extraer_monto_gasto(texto, r'TOTAL\s+POR\s+HONORARIOS\s*:?\s*S?/?\.?\s*([\d,]+\.\d{2})')
 
 
@@ -1126,14 +1087,8 @@ def _extraer_datos_pdf_gasto(texto: str, ruc_propio: Optional[str]) -> dict:
     if es_honorarios and not ruc_proveedor:
         ruc_proveedor, proveedor = _extraer_emisor_recibo_honorarios(texto, ruc_propio)
     if es_honorarios and not ruc_proveedor:
-        # La etiqueta real suele ser "R.U.C." (con puntos), no "RUC:" como
-        # asume _extraer_emisor_gasto.
         ruc_proveedor = _extraer_ruc_recibo_honorarios_gasto(texto, ruc_propio)
     if es_honorarios and not ruc_proveedor:
-        # Último recurso: el RUC de persona natural (emisor del recibo por
-        # honorarios) siempre empieza con "10" y aparece antes del N° de
-        # comprobante, sin depender de la posición de línea relativa al
-        # título del comprobante.
         limite = None
         if numero_comprobante:
             m_num = re.search(re.escape(numero_comprobante), texto, re.IGNORECASE)
@@ -1142,15 +1097,10 @@ def _extraer_datos_pdf_gasto(texto: str, ruc_propio: Optional[str]) -> dict:
         ruc_proveedor = _extraer_ruc_persona_natural_gasto(texto, ruc_propio, limite)
 
     if es_honorarios:
-        # Recibo por Honorarios usa fecha textual ("08 Abril 2026"), no el
-        # DD/MM/YYYY numérico de Factura/Boleta.
         fecha = _extraer_fecha_texto_gasto(
             texto, r'FECHA\s+DE\s+EMISI[OÓ]N\s*:?\s*(\d{1,2})\s+(?:DE\s+)?(\w+)\s+(?:DE\s+)?(\d{4})',
         )
         if not fecha:
-            # La etiqueta y el valor a veces quedan en líneas/columnas
-            # distintas tras la extracción de pdfplumber; se busca la fecha
-            # directamente sin anclarla a "FECHA DE EMISIÓN".
             fecha = _extraer_fecha_libre_es_gasto(texto)
     else:
         fecha = _extraer_fecha_gasto(texto, r'FECHA\s*(?:DE\s+)?EMISI[OÓ]N\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})')
@@ -1159,16 +1109,9 @@ def _extraer_datos_pdf_gasto(texto: str, ruc_propio: Optional[str]) -> dict:
     retencion_monto = None
     total_neto      = None
     if es_honorarios:
-        # Los honorarios no tienen IGV; la base imponible es el propio total
-        # por honorarios (monto bruto antes de una eventual retención del 8%).
         monto          = _extraer_total_honorarios_gasto(texto) or _extraer_total_gasto(texto)
         base_imponible = monto
         igv            = 0.0
-        # La retención del 8% (renta de 4ta categoría) no siempre aplica —
-        # depende del caso (ej. suspensión de retenciones del emisor), así
-        # que no se calcula automáticamente al importar: se deja en 0 por
-        # defecto y el usuario decide si aplicarla desde el frontend
-        # (checkbox "Aplicar Retención IR (8%)" en el formulario de Gastos).
         if monto is not None:
             retencion_monto = 0.0
             total_neto      = monto
@@ -1176,8 +1119,6 @@ def _extraer_datos_pdf_gasto(texto: str, ruc_propio: Optional[str]) -> dict:
         base_imponible = _extraer_monto_gasto(texto, r'(?:OP\.?\s*GRAVADAS?|BASE\s+IMPONIBLE|VALOR\s+VENTA|SUB[\s-]?TOTAL(?:\s+VENTAS)?)[:\s]+S?/?\.?\s*([\d,]+\.\d{2})')
         igv            = _extraer_monto_gasto(texto, r'I[GU]V\s*(?:1[08]\.?0?\s?%)?\s*:?\s*S?/?\.?\s*([\d,]+\.\d{2})')
         monto          = _extraer_total_gasto(texto)
-        # Si no se detectó la base imponible directamente pero sí el total y
-        # el IGV, se calcula por diferencia (TOTAL - IGV) en vez de dejarla vacía.
         if base_imponible is None and monto is not None and igv is not None:
             base_imponible = round(monto - igv, 2)
 
@@ -1194,8 +1135,6 @@ def _extraer_datos_pdf_gasto(texto: str, ruc_propio: Optional[str]) -> dict:
     campos_no_detectados = [c for c in _CAMPOS_CLAVE_GASTO if not detectados.get(c)]
 
     if es_honorarios:
-        # Regla de confianza propia del Recibo por Honorarios: sus campos más
-        # informativos son tipo + RUC del emisor + monto.
         if tipo_comprobante and ruc_proveedor and monto:
             confianza = 1.0
         elif tipo_comprobante and monto:
@@ -1205,8 +1144,6 @@ def _extraer_datos_pdf_gasto(texto: str, ruc_propio: Optional[str]) -> dict:
         else:
             confianza = 0.0
     else:
-        # Categoría y área nunca vienen en el PDF: siempre son manuales, pero
-        # no deben penalizar la confianza de lo que sí se pudo leer del PDF.
         confianza = round(1 - len(campos_no_detectados) / len(_CAMPOS_CLAVE_GASTO), 2)
 
     campos_no_detectados = campos_no_detectados + ["categoria", "area"]
@@ -1231,21 +1168,15 @@ def _extraer_datos_pdf_gasto(texto: str, ruc_propio: Optional[str]) -> dict:
         resultado["retencion_monto"]  = retencion_monto
         resultado["total_neto"]       = total_neto
         resultado["forma_pago"]       = _extraer_forma_pago_gasto(texto)
-        # Recibo por Honorarios nunca lleva detracción (SPOT): es retención
-        # de renta de 4ta categoría, un régimen tributario distinto.
         resultado["tiene_detraccion"] = False
         resultado["detraccion_monto"] = 0
         resultado["codigo_detraccion"] = None
     return resultado
 
 
-def _procesar_pdf_individual_gasto(contenido: bytes, nombre_archivo: str, db: Session, ruc_propio: Optional[str]) -> dict:
-    """Extrae y clasifica los datos de un PDF de factura/boleta de proveedor.
-
-    No lanza excepciones por PDFs inválidos: siempre retorna un dict con
-    "estado" ("listo" | "revisar" | "no_valido" | "duplicado") para que el
-    llamador (carga individual o masiva) decida qué hacer con cada archivo.
-    """
+def _procesar_pdf_individual_gasto(contenido: bytes, nombre_archivo: str, db: Session,
+                                    ruc_propio: Optional[str],
+                                    empresa_id: Optional[int] = None) -> dict:
     try:
         with pdfplumber.open(io.BytesIO(contenido)) as pdf:
             paginas_texto = [pagina.extract_text() or "" for pagina in pdf.pages]
@@ -1269,10 +1200,13 @@ def _procesar_pdf_individual_gasto(contenido: bytes, nombre_archivo: str, db: Se
 
     existente = None
     if resultado["numero_comprobante"] and resultado["numero_documento"]:
-        existente = db.query(Gasto).filter(
+        q_dup = db.query(Gasto).filter(
             Gasto.numero_comprobante == resultado["numero_comprobante"],
             Gasto.numero_documento == resultado["numero_documento"],
-        ).first()
+        )
+        if empresa_id is not None:
+            q_dup = q_dup.filter(Gasto.empresa_id == empresa_id)
+        existente = q_dup.first()
 
     if existente:
         resultado["estado"] = "duplicado"
@@ -1295,7 +1229,11 @@ def _procesar_pdf_individual_gasto(contenido: bytes, nombre_archivo: str, db: Se
 
 
 @router.post("/importar-pdf")
-async def importar_pdf_gasto(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def importar_pdf_gasto(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(400, "El archivo debe ser un PDF")
 
@@ -1303,15 +1241,19 @@ async def importar_pdf_gasto(file: UploadFile = File(...), db: Session = Depends
     if len(contenido) > TAMANO_MAXIMO_PDF_GASTO:
         raise HTTPException(400, "El archivo supera el tamaño máximo de 10 MB")
 
-    ruc_propio = _ruc_empresa_propia(db)
-    resultado = _procesar_pdf_individual_gasto(contenido, file.filename, db, ruc_propio)
+    ruc_propio = _ruc_empresa_propia(db, empresa_id)
+    resultado = _procesar_pdf_individual_gasto(contenido, file.filename, db, ruc_propio, empresa_id)
     if resultado.get("no_valido_ilegible"):
         raise HTTPException(422, resultado["error"])
     return resultado
 
 
 @router.post("/importar-zip")
-async def importar_zip_gasto(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def importar_zip_gasto(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(400, "El archivo debe ser un ZIP")
 
@@ -1330,7 +1272,7 @@ async def importar_zip_gasto(file: UploadFile = File(...), db: Session = Depends
     if len(pdf_names) > MAX_PDFS_POR_ZIP_GASTO:
         raise HTTPException(400, f"El ZIP contiene {len(pdf_names)} PDFs; el máximo permitido es {MAX_PDFS_POR_ZIP_GASTO}")
 
-    ruc_propio = _ruc_empresa_propia(db)
+    ruc_propio = _ruc_empresa_propia(db, empresa_id)
     resultados = []
     for pdf_name in pdf_names:
         try:
@@ -1344,16 +1286,9 @@ async def importar_zip_gasto(file: UploadFile = File(...), db: Session = Depends
                 )
             raise
         nombre_corto = pdf_name.rsplit("/", 1)[-1]
-        resultado = _procesar_pdf_individual_gasto(contenido_pdf, nombre_corto, db, ruc_propio)
+        resultado = _procesar_pdf_individual_gasto(contenido_pdf, nombre_corto, db, ruc_propio, empresa_id)
         resultado["archivo"] = nombre_corto
 
-        # Se conserva el PDF original en staging para poder adjuntarlo al
-        # gasto si el usuario confirma su importación (ver
-        # importar_zip_confirmar_gasto / _crear_gasto), que decide si se
-        # conserva definitivamente según TIPOS_CON_PDF_GASTO. Se guarda
-        # incluso para filas "revisar"/"no_valido" por simplicidad; los
-        # archivos no confirmados quedan huérfanos en TMP_ZIP_DIR_GASTOS
-        # (limpieza manual).
         TMP_ZIP_DIR_GASTOS.mkdir(parents=True, exist_ok=True)
         nombre_temp = f"{uuid.uuid4().hex}.pdf"
         with open(TMP_ZIP_DIR_GASTOS / nombre_temp, "wb") as f:
@@ -1371,11 +1306,13 @@ class ImportarZipConfirmarRequestGasto(BaseModel):
 
 @router.post("/importar-zip/confirmar")
 def importar_zip_confirmar_gasto(data: ImportarZipConfirmarRequestGasto, http_request: Request,
-                                  db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
+                                  db: Session = Depends(get_db),
+                                  usuario: Usuario = Depends(get_current_usuario),
+                                  empresa_id: Optional[int] = Depends(get_empresa_id)):
     resultados = []
     for item in data.gastos:
         try:
-            r = _crear_gasto(item, http_request, db, usuario)
+            r = _crear_gasto(item, http_request, db, usuario, empresa_id)
             resultados.append({
                 "numero_comprobante": item.numero_comprobante, "exito": True, "id": r["id"],
             })
@@ -1396,14 +1333,17 @@ def listar_cpp(
     search:    str            = "",
     categoria: str            = "",
     area:      str            = "",
-    estado:    str            = "",  # "" | "Pendiente" | "Pago Parcial" | "Pagado" — ver Gasto.estado_pago
+    estado:    str            = "",
     desde:     Optional[date] = None,
     hasta:     Optional[date] = None,
     page:      int            = 1,
     per_page:  int            = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(Gasto).filter(Gasto.tipo_comprobante != "Anticipo de Proveedor")
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if search:
         like = f"%{search}%"
         q = q.filter(
@@ -1427,8 +1367,14 @@ def listar_cpp(
 
 
 @router.get("/cuentas-por-pagar/resumen")
-def resumen_cpp(db: Session = Depends(get_db)):
-    all_gastos    = db.query(Gasto).filter(Gasto.tipo_comprobante != "Anticipo de Proveedor").all()
+def resumen_cpp(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.tipo_comprobante != "Anticipo de Proveedor")
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    all_gastos    = q.all()
     total_pend    = al_dia = por_vencer_15 = vencido_mas_15 = 0.0
     for g in all_gastos:
         if g.estado_pago == "Pagado":
@@ -1459,6 +1405,7 @@ def exportar_cpp(
     categoria: str            = "",
     area:      str            = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     try:
         from openpyxl import Workbook
@@ -1467,6 +1414,8 @@ def exportar_cpp(
         raise HTTPException(500, "Instale openpyxl: pip install openpyxl")
 
     q = db.query(Gasto).filter(Gasto.tipo_comprobante != "Anticipo de Proveedor")
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if desde:     q = q.filter(Gasto.fecha >= desde)
     if hasta:     q = q.filter(Gasto.fecha <= hasta)
     if proveedor: q = q.filter(Gasto.proveedor.ilike(f"%{proveedor}%"))
@@ -1492,8 +1441,6 @@ def exportar_cpp(
                "Estado", "F. Vencimiento", "Días de Mora"]
     WIDTHS  = [12, 22, 16, 16, 28, 30, 16, 20, 10, 14, 10, 18, 14, 14, 22, 14, 16, 14]
 
-    # Fila 1: título con los filtros aplicados (Categoría/Área), fusionada a
-    # todo el ancho de la tabla.
     filtros_label = []
     if categoria: filtros_label.append(f"Categoría: {categoria}")
     if area:      filtros_label.append(f"Área: {area}")
@@ -1557,11 +1504,7 @@ def exportar_cpp(
     )
 
 
-# ── Pagos Tributarios (sub-módulo de Gastos, categoría "Pagos Tributarios") ─────
-# Reutiliza la tabla gastos (mismo patrón que Cuentas por Pagar) filtrando por
-# categoría, y reutiliza POST /{gasto_id}/pago, GET /{gasto_id}/historial-pagos,
-# PUT/DELETE /{gasto_id} para crear/editar/eliminar/pagar. Rutas estáticas
-# antes del param /{gasto_id}.
+# ── Pagos Tributarios ─────────────────────────────────────────────────────────────
 
 @router.get("/pagos-tributarios")
 def listar_pagos_tributarios(
@@ -1573,8 +1516,11 @@ def listar_pagos_tributarios(
     page:         int            = 1,
     per_page:     int            = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(Gasto).filter(Gasto.categoria == CATEGORIA_NO_AFECTA_UTILIDAD)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if concepto:     q = q.filter(Gasto.descripcion == concepto)
     if periodo_mes:  q = q.filter(Gasto.periodo_mes == periodo_mes)
     if periodo_anio: q = q.filter(Gasto.periodo_anio == periodo_anio)
@@ -1590,33 +1536,45 @@ def listar_pagos_tributarios(
 
 
 @router.get("/pagos-tributarios/resumen-kpis")
-def resumen_pagos_tributarios(db: Session = Depends(get_db)):
+def resumen_pagos_tributarios(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     hoy = date.today()
 
-    pagado_mes = float(
+    q_pagado_mes = (
         db.query(func.sum(PagoGasto.monto_pagado))
         .join(Gasto, Gasto.id == PagoGasto.gasto_id)
         .filter(
             Gasto.categoria == CATEGORIA_NO_AFECTA_UTILIDAD,
             extract("month", PagoGasto.fecha_pago) == hoy.month,
             extract("year",  PagoGasto.fecha_pago) == hoy.year,
-        ).scalar() or 0
+        )
     )
-    pagado_anio = float(
+    if empresa_id is not None:
+        q_pagado_mes = q_pagado_mes.filter(Gasto.empresa_id == empresa_id)
+    pagado_mes = float(q_pagado_mes.scalar() or 0)
+
+    q_pagado_anio = (
         db.query(func.sum(PagoGasto.monto_pagado))
         .join(Gasto, Gasto.id == PagoGasto.gasto_id)
         .filter(
             Gasto.categoria == CATEGORIA_NO_AFECTA_UTILIDAD,
             extract("year", PagoGasto.fecha_pago) == hoy.year,
-        ).scalar() or 0
+        )
     )
-    pendiente = float(
-        db.query(func.sum(Gasto.saldo_pendiente))
-        .filter(
-            Gasto.categoria == CATEGORIA_NO_AFECTA_UTILIDAD,
-            Gasto.estado_pago != "Pagado",
-        ).scalar() or 0
+    if empresa_id is not None:
+        q_pagado_anio = q_pagado_anio.filter(Gasto.empresa_id == empresa_id)
+    pagado_anio = float(q_pagado_anio.scalar() or 0)
+
+    q_pendiente = db.query(func.sum(Gasto.saldo_pendiente)).filter(
+        Gasto.categoria == CATEGORIA_NO_AFECTA_UTILIDAD,
+        Gasto.estado_pago != "Pagado",
     )
+    if empresa_id is not None:
+        q_pendiente = q_pendiente.filter(Gasto.empresa_id == empresa_id)
+    pendiente = float(q_pendiente.scalar() or 0)
+
     return {
         "pagado_mes":  round(pagado_mes, 2),
         "pendiente":   round(pendiente, 2),
@@ -1631,6 +1589,7 @@ def exportar_pagos_tributarios(
     concepto:     str           = "",
     estado:       str           = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     try:
         from openpyxl import Workbook
@@ -1639,6 +1598,8 @@ def exportar_pagos_tributarios(
         raise HTTPException(500, "Instale openpyxl: pip install openpyxl")
 
     q = db.query(Gasto).filter(Gasto.categoria == CATEGORIA_NO_AFECTA_UTILIDAD)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if periodo_mes:  q = q.filter(Gasto.periodo_mes == periodo_mes)
     if periodo_anio: q = q.filter(Gasto.periodo_anio == periodo_anio)
     if concepto:     q = q.filter(Gasto.descripcion == concepto)
@@ -1687,15 +1648,22 @@ def exportar_pagos_tributarios(
         headers={"Content-Disposition": f"attachment; filename={fname}"},
     )
 
-
-# ── Editar / Eliminar pagos (rutas estáticas antes del param /{gasto_id}) ───────
+# ── Editar / Eliminar pagos ───────────────────────────────────────────────────────
 
 @router.put("/pagos/{pago_id}")
-def editar_pago_gasto(pago_id: int, data: PagoGastoUpdate, db: Session = Depends(get_db)):
+def editar_pago_gasto(
+    pago_id: int,
+    data: PagoGastoUpdate,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     pago = db.query(PagoGasto).filter(PagoGasto.id == pago_id).first()
     if not pago:
         raise HTTPException(404, "Pago no encontrado")
-    g = db.query(Gasto).filter(Gasto.id == pago.gasto_id).first()
+    q_g = db.query(Gasto).filter(Gasto.id == pago.gasto_id)
+    if empresa_id is not None:
+        q_g = q_g.filter(Gasto.empresa_id == empresa_id)
+    g = q_g.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     if data.monto_pagado <= 0:
@@ -1715,17 +1683,16 @@ def editar_pago_gasto(pago_id: int, data: PagoGastoUpdate, db: Session = Depends
 
 
 @router.delete("/pagos/{pago_id}")
-def eliminar_pago_gasto(pago_id: int, db: Session = Depends(get_db)):
+def eliminar_pago_gasto(
+    pago_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     pago = db.query(PagoGasto).filter(PagoGasto.id == pago_id).first()
     if not pago:
         raise HTTPException(404, "Pago no encontrado")
 
     if pago.tipo == "pago_cuota_prestamo":
-        # Pago de cuota de préstamo (sin Gasto propio, ver PagoGasto.gasto_id)
-        # — revierte la cuota a "pendiente" (conserva la fila del cronograma,
-        # no la borra) y restaura el saldo del préstamo. Los Gastos
-        # financieros (interés/seguro/comisión) que generó también se
-        # eliminan — ver Gasto.cuota_prestamo_id.
         cuota = db.query(CuotaPrestamo).filter(CuotaPrestamo.id == pago.referencia_id).first()
         if cuota:
             prestamo = db.query(Prestamo).filter(Prestamo.id == cuota.prestamo_id).first()
@@ -1739,30 +1706,22 @@ def eliminar_pago_gasto(pago_id: int, db: Session = Depends(get_db)):
             cuota.metodo_pago        = None
             cuota.cuenta_bancaria_id = None
             cuota.movimiento_caja_id = None
-            # Flush primero: libera la FK cuotas_prestamo.movimiento_caja_id
-            # antes de borrar el movimiento — si no, Postgres rechaza el
-            # DELETE con ForeignKeyViolation porque la cuota aún lo referencia.
             db.flush()
             if movimiento_caja_id_anterior:
                 movimiento = db.query(MovimientoCaja).filter(MovimientoCaja.id == movimiento_caja_id_anterior).first()
                 if movimiento:
                     db.delete(movimiento)
             db.query(Gasto).filter(Gasto.cuota_prestamo_id == cuota.id).delete()
-            # Limpia los espejos en movimientos_conciliacion: el de la cuota
-            # (referencia_sistema_tipo="prestamo", ver sincronizar_pagos_periodo
-            # — ya no aplica, la cuota volvió a "pendiente") y, por si quedó de
-            # antes de que ese sync excluyera este tipo de pago, un posible
-            # mirror "gasto" heredado de este mismo PagoGasto. Sin esto, el
-            # movimiento del banco vinculado quedaba "Conciliado" apuntando a
-            # un documento que ya no existe/ya no aplica, en vez de volver a
-            # "Solo en Banco" para poder conciliar con el próximo pago.
             limpiar_movimiento_sistema_por_pago(db, "prestamo", cuota.id)
         limpiar_movimiento_sistema_por_pago(db, "gasto", pago.id)
         db.delete(pago)
         db.commit()
         return {"mensaje": "Pago de cuota eliminado — la cuota volvió a estado pendiente"}
 
-    g = db.query(Gasto).filter(Gasto.id == pago.gasto_id).first()
+    q_g = db.query(Gasto).filter(Gasto.id == pago.gasto_id)
+    if empresa_id is not None:
+        q_g = q_g.filter(Gasto.empresa_id == empresa_id)
+    g = q_g.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     limpiar_movimiento_sistema_por_pago(db, "gasto", pago.id)
@@ -1774,8 +1733,7 @@ def eliminar_pago_gasto(pago_id: int, db: Session = Depends(get_db)):
     return {"mensaje": "Pago eliminado", "saldo_pendiente": g.saldo_pendiente, "estado_pago": g.estado_pago}
 
 
-# ── Lista de Pagos (todos los pagos registrados, tab "Lista de Pagos") ──────────
-# Ruta estática antes del param /{gasto_id}.
+# ── Lista de Pagos ────────────────────────────────────────────────────────────────
 
 @router.get("/pagos")
 def listar_pagos(
@@ -1787,13 +1745,23 @@ def listar_pagos(
     page:          int            = 1,
     per_page:      int            = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
-    # Combina pagos individuales de Gastos (PagoGasto) con pagos consolidados
-    # de lotes de detracciones (LoteDetraccion, un solo registro por lote en
-    # vez de un PagoGasto por factura) en una sola lista ordenada por fecha.
     filas = []
 
+    # PagoGasto: usa outerjoin con Gasto para filtrar por empresa_id,
+    # manteniendo los pago_cuota_prestamo (gasto_id=None) que no tienen Gasto.
     q = db.query(PagoGasto)
+    if empresa_id is not None:
+        from sqlalchemy.orm import aliased
+        GastoAlias = aliased(Gasto)
+        q = (
+            db.query(PagoGasto)
+            .outerjoin(GastoAlias, PagoGasto.gasto_id == GastoAlias.id)
+            .filter(
+                (PagoGasto.gasto_id == None) | (GastoAlias.empresa_id == empresa_id)
+            )
+        )
     if desde:         q = q.filter(PagoGasto.fecha_pago >= desde)
     if hasta:         q = q.filter(PagoGasto.fecha_pago <= hasta)
     if banco:         q = q.filter(PagoGasto.banco == banco)
@@ -1801,8 +1769,6 @@ def listar_pagos(
     if metodo_pago:   q = q.filter(PagoGasto.metodo_pago == metodo_pago)
     for p in q.all():
         if p.tipo == "pago_cuota_prestamo":
-            # Sin Gasto propio (gasto_id=None) — la descripción/comprobante se
-            # arman desde la CuotaPrestamo/Prestamo que referencia_id apunta.
             cuota    = db.query(CuotaPrestamo).filter(CuotaPrestamo.id == p.referencia_id).first()
             prestamo = db.query(Prestamo).filter(Prestamo.id == cuota.prestamo_id).first() if cuota else None
             if cuota and prestamo:
@@ -1857,6 +1823,8 @@ def listar_pagos(
     ql = db.query(LoteDetraccion).filter(
         LoteDetraccion.estado == "pagado", LoteDetraccion.fecha_pago.isnot(None),
     )
+    if empresa_id is not None:
+        ql = ql.filter(LoteDetraccion.empresa_id == empresa_id)
     if desde:         ql = ql.filter(LoteDetraccion.fecha_pago >= desde)
     if hasta:         ql = ql.filter(LoteDetraccion.fecha_pago <= hasta)
     if banco:         ql = ql.filter(LoteDetraccion.banco == banco)
@@ -1883,6 +1851,8 @@ def listar_pagos(
         })
 
     qo = db.query(OrdenPago)
+    if empresa_id is not None:
+        qo = qo.filter(OrdenPago.empresa_id == empresa_id)
     if desde:         qo = qo.filter(OrdenPago.fecha_pago >= desde)
     if hasta:         qo = qo.filter(OrdenPago.fecha_pago <= hasta)
     if banco:         qo = qo.filter(OrdenPago.banco == banco)
@@ -1908,14 +1878,11 @@ def listar_pagos(
             "cantidad_facturas":  len(o.detalles),
         })
 
-    # Devoluciones de garantía (PagoGarantia.tipo="devolucion") — no se crea un
-    # PagoGasto para esto (Garantia no es un Gasto y PagoGasto.gasto_id es
-    # NOT NULL); en vez de eso se agrega como una cuarta fuente a esta misma
-    # lista combinada, igual que ya se hace con lotes de detracciones y
-    # órdenes de pago.
     qg = db.query(PagoGarantia, Garantia).join(
         Garantia, PagoGarantia.garantia_id == Garantia.id
     ).filter(PagoGarantia.tipo == "devolucion")
+    if empresa_id is not None:
+        qg = qg.filter(Garantia.empresa_id == empresa_id)
     if desde:       qg = qg.filter(PagoGarantia.fecha >= desde)
     if hasta:       qg = qg.filter(PagoGarantia.fecha <= hasta)
     if metodo_pago: qg = qg.filter(PagoGarantia.metodo_pago == metodo_pago)
@@ -1956,21 +1923,33 @@ def listar_pagos(
 # ── Obtener gasto ────────────────────────────────────────────────────────────────
 
 @router.get("/{gasto_id}")
-def obtener_gasto(gasto_id: int, db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def obtener_gasto(
+    gasto_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     return _serialize(g)
 
 
-# ── Comprobante adjunto (PDF/imagen original del proveedor) ─────────────────────
-# Igual patrón que app/routers/ventas.py para VentaComercial: cuando el gasto
-# viene de una importación de PDF, se conserva el archivo original en disco
-# para poder mostrarlo/descargarlo tal cual, sin regenerar un documento nuevo.
+# ── Comprobante adjunto ──────────────────────────────────────────────────────────
 
 @router.post("/{gasto_id}/comprobante")
-async def subir_comprobante_gasto(gasto_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+async def subir_comprobante_gasto(
+    gasto_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
 
@@ -2003,8 +1982,16 @@ async def subir_comprobante_gasto(gasto_id: int, file: UploadFile = File(...), d
 
 
 @router.get("/{gasto_id}/comprobante")
-def ver_comprobante_gasto(gasto_id: int, download: bool = False, db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def ver_comprobante_gasto(
+    gasto_id: int,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g or not g.comprobante_path:
         raise HTTPException(404, "Comprobante no encontrado")
     if not Path(g.comprobante_path).exists():
@@ -2018,8 +2005,15 @@ def ver_comprobante_gasto(gasto_id: int, download: bool = False, db: Session = D
 
 
 @router.delete("/{gasto_id}/comprobante")
-def eliminar_comprobante_gasto(gasto_id: int, db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def eliminar_comprobante_gasto(
+    gasto_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     if g.comprobante_path:
@@ -2030,11 +2024,19 @@ def eliminar_comprobante_gasto(gasto_id: int, db: Session = Depends(get_db)):
     return {"mensaje": "Comprobante eliminado"}
 
 
-# ── Imprimir (Factura de gasto / Recibo Interno / etc.) ───────────────────────────
+# ── Imprimir ──────────────────────────────────────────────────────────────────────
 
 @router.get("/{gasto_id}/imprimir")
-def imprimir_gasto(gasto_id: int, db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def imprimir_gasto(
+    gasto_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     s = _serialize(g)
@@ -2079,9 +2081,18 @@ def imprimir_gasto(gasto_id: int, db: Session = Depends(get_db), usuario: Usuari
 # ── Actualizar gasto ─────────────────────────────────────────────────────────────
 
 @router.put("/{gasto_id}")
-def actualizar_gasto(gasto_id: int, data: GastoUpdate, http_request: Request, db: Session = Depends(get_db),
-                      usuario: Usuario = Depends(get_current_usuario)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def actualizar_gasto(
+    gasto_id: int,
+    data: GastoUpdate,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     if data.monto <= 0:
@@ -2089,11 +2100,11 @@ def actualizar_gasto(gasto_id: int, data: GastoUpdate, http_request: Request, db
 
     numero = data.numero_comprobante
     if data.tipo_comprobante == "Recibo Interno" and not numero:
-        numero = _proximo_ri(db)
+        numero = _proximo_ri(db, empresa_id)
     elif data.tipo_comprobante == "Gastos Bancarios" and not numero:
-        numero = _proximo_gb(db)
+        numero = _proximo_gb(db, empresa_id)
     elif data.tipo_comprobante == "Anticipo de Proveedor" and not numero:
-        numero = _proximo_ap(db)
+        numero = _proximo_ap(db, empresa_id)
 
     es_anticipo = data.tipo_comprobante == "Anticipo de Proveedor"
 
@@ -2144,13 +2155,12 @@ def actualizar_gasto(gasto_id: int, data: GastoUpdate, http_request: Request, db
     if data.es_recurrente:
         g.recurrente_activo = True
     if es_anticipo:
-        # Los anticipos de proveedor ya fueron pagados por adelantado: no generan cuenta por pagar.
         g.saldo_pendiente = None
         g.estado_pago     = None
     else:
         _recalcular_pago_gasto(db, g)
 
-    g.proveedor_id = _upsert_proveedor(db, data.tipo_documento, data.numero_documento, data.proveedor)
+    g.proveedor_id = _upsert_proveedor(db, data.tipo_documento, data.numero_documento, data.proveedor, empresa_id)
     g.modificado_por = usuario.nombre
     g.modificado_en  = datetime.utcnow()
     db.commit()
@@ -2172,31 +2182,32 @@ class EliminarGastosMasivoRequest(BaseModel):
 
 
 @router.delete("/eliminar-masivo")
-def eliminar_gastos_masivo(data: EliminarGastosMasivoRequest, http_request: Request,
-                            db: Session = Depends(get_db),
-                            usuario: Usuario = Depends(get_current_usuario)):
-    """Elimina varios gastos a la vez, respetando las mismas foreign keys que
-    DELETE /{gasto_id}: detraccion_lote_detalles, ordenes_pago_detalle,
-    pagos_gastos e instancias recurrentes hijas."""
+def eliminar_gastos_masivo(
+    data: EliminarGastosMasivoRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     resultados = []
     for gasto_id in data.ids:
-        g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+        q = db.query(Gasto).filter(Gasto.id == gasto_id)
+        if empresa_id is not None:
+            q = q.filter(Gasto.empresa_id == empresa_id)
+        g = q.first()
         if not g:
             resultados.append({"id": gasto_id, "exito": False, "error": "Gasto no encontrado"})
             continue
 
         try:
-            # Eliminar referencias en detraccion_lote_detalles
             db.query(LoteDetraccionDetalle).filter(
                 LoteDetraccionDetalle.gasto_id == gasto_id
             ).delete()
 
-            # Eliminar referencias en ordenes_pago_detalle
             db.query(OrdenPagoDetalle).filter(
                 OrdenPagoDetalle.gasto_id == gasto_id
             ).delete()
 
-            # Eliminar pagos_gastos relacionados
             db.query(PagoGasto).filter(
                 PagoGasto.gasto_id == gasto_id
             ).delete()
@@ -2223,18 +2234,24 @@ def eliminar_gastos_masivo(data: EliminarGastosMasivoRequest, http_request: Requ
 
 
 @router.delete("/{gasto_id}")
-def eliminar_gasto(gasto_id: int, http_request: Request, db: Session = Depends(get_db),
-                    usuario: Usuario = Depends(get_current_usuario)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def eliminar_gasto(
+    gasto_id: int,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
 
-    # Eliminar referencias en detraccion_lote_detalles
     db.query(LoteDetraccionDetalle).filter(
         LoteDetraccionDetalle.gasto_id == gasto_id
     ).delete()
 
-    # Eliminar referencias en ordenes_pago_detalle
     db.query(OrdenPagoDetalle).filter(
         OrdenPagoDetalle.gasto_id == gasto_id
     ).delete()
@@ -2261,8 +2278,15 @@ def eliminar_gasto(gasto_id: int, http_request: Request, db: Session = Depends(g
 # ── Toggle recurrente ────────────────────────────────────────────────────────────
 
 @router.post("/{gasto_id}/toggle-recurrente")
-def toggle_recurrente(gasto_id: int, db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def toggle_recurrente(
+    gasto_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     if not g.es_recurrente:
@@ -2276,8 +2300,16 @@ def toggle_recurrente(gasto_id: int, db: Session = Depends(get_db)):
 # ── Registrar pago ────────────────────────────────────────────────────────────────
 
 @router.post("/{gasto_id}/pago")
-def registrar_pago_gasto(gasto_id: int, data: PagoGastoCreate, db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def registrar_pago_gasto(
+    gasto_id: int,
+    data: PagoGastoCreate,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     if g.estado_pago == "Pagado":
@@ -2286,14 +2318,6 @@ def registrar_pago_gasto(gasto_id: int, data: PagoGastoCreate, db: Session = Dep
     if data.monto_pagado <= 0:
         raise HTTPException(400, "El monto a pagar debe ser mayor a 0")
 
-    # Diferencia entre lo pagado y el saldo: en Gastos el dinero SALE de la
-    # empresa (a diferencia de Cobranza, donde entra), así que el signo de
-    # ganancia/pérdida es el opuesto al de registrar_pago() en cobranza.py:
-    # pagar de MENOS de lo que debíamos es "ganancia" (nos quedamos con esa
-    # plata); pagar de MÁS es "perdida". Dentro de la tolerancia, la deuda se
-    # cierra igual y la diferencia queda registrada en el pago como redondeo;
-    # fuera de tolerancia, sigue el comportamiento normal (pago parcial, o
-    # error si excede el saldo).
     diferencia = round(data.monto_pagado - saldo_actual, 2)
     if diferencia > TOLERANCIA_REDONDEO + 0.01:
         raise HTTPException(400, f"El monto ({data.monto_pagado:.2f}) excede el saldo pendiente ({saldo_actual:.2f})")
@@ -2310,7 +2334,6 @@ def registrar_pago_gasto(gasto_id: int, data: PagoGastoCreate, db: Session = Dep
             redondeo_tipo  = "perdida"
             redondeo_monto = diferencia
     else:
-        # Pago parcial normal (diferencia negativa, fuera de tolerancia)
         nuevo_saldo  = round(saldo_actual - data.monto_pagado, 2)
         nuevo_estado = "Pago Parcial"
 
@@ -2346,8 +2369,15 @@ def registrar_pago_gasto(gasto_id: int, data: PagoGastoCreate, db: Session = Dep
 # ── Historial de pagos ────────────────────────────────────────────────────────────
 
 @router.get("/{gasto_id}/historial-pagos")
-def historial_pagos_gasto(gasto_id: int, db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def historial_pagos_gasto(
+    gasto_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     pagos = db.query(PagoGasto).filter(PagoGasto.gasto_id == gasto_id).order_by(PagoGasto.fecha_pago.asc()).all()

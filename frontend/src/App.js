@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ServerStatusProvider } from "./context/ServerStatusContext";
 import { EmpresaProvider } from "./context/EmpresaContext";
 import { SidebarProvider } from "./context/SidebarContext";
-import { tienePermiso } from "./core/permisos";
+import { tienePermiso, esSuperadmin } from "./core/permisos";
 import { getOnboardingStatus } from "./api/configuracionApi";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -26,6 +26,7 @@ const Reportes            = lazy(() => import("./pages/Reportes"));
 const Configuracion       = lazy(() => import("./pages/Configuracion"));
 const Onboarding          = lazy(() => import("./pages/Onboarding"));
 const ImprimirComprobante = lazy(() => import("./pages/ImprimirComprobante"));
+const AdminPanel          = lazy(() => import("./pages/AdminPanel"));
 
 function Fallback() {
   return <div className="flex h-screen items-center justify-center text-gray-400 text-sm">Cargando módulo...</div>;
@@ -43,9 +44,10 @@ function AccesoDenegado() {
   );
 }
 
-function ProtectedRoute({ children, modulo }) {
+function ProtectedRoute({ children, modulo, soloSuperadmin }) {
   const { isAuth, usuario } = useAuth();
   if (!isAuth) return <Navigate to="/login" replace />;
+  if (soloSuperadmin && !esSuperadmin(usuario?.rol)) return <AccesoDenegado />;
   if (modulo && !tienePermiso(usuario?.rol, modulo)) return <AccesoDenegado />;
   return children;
 }
@@ -76,6 +78,10 @@ function OnboardingGate({ children }) {
       window.removeEventListener("onboarding-completado", verificar);
     };
   }, [isAuth]);
+
+  // El superadmin nunca pasa por el onboarding gate (no tiene empresa)
+  const { usuario } = useAuth();
+  if (esSuperadmin(usuario?.rol)) return children;
 
   if (!isAuth || location.pathname === "/login" || location.pathname === "/onboarding") return children;
   if (estado === "cargando") return <Fallback />;
@@ -111,6 +117,7 @@ export default function App() {
               <Route path="/indicadores" element={<ProtectedRoute modulo="indicadores"><Indicadores /></ProtectedRoute>} />
               <Route path="/reportes" element={<ProtectedRoute modulo="reportes"><Reportes /></ProtectedRoute>} />
               <Route path="/configuracion" element={<ProtectedRoute modulo="configuracion"><Configuracion /></ProtectedRoute>} />
+              <Route path="/admin" element={<ProtectedRoute soloSuperadmin><AdminPanel /></ProtectedRoute>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>

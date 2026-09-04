@@ -1,10 +1,11 @@
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from app.models.comercial import DocumentoCliente, VentaComercial
 from app.models.models import Cliente
+from app.core.security import get_empresa_id
 from datetime import date
-from typing import Optional
 
 router = APIRouter()
 
@@ -17,8 +18,16 @@ def listar_todos(
     fecha_desde: Optional[date] = None,
     fecha_hasta: Optional[date] = None,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(DocumentoCliente)
+
+    # Filtro por empresa: DocumentoCliente no tiene empresa_id propio,
+    # se filtra a través del Cliente al que pertenece.
+    if empresa_id is not None:
+        q = q.join(Cliente, DocumentoCliente.cliente_id == Cliente.id).filter(
+            Cliente.empresa_id == empresa_id
+        )
 
     if cliente_id:
         q = q.filter(DocumentoCliente.cliente_id == cliente_id)

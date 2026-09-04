@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
 from app.models.models import Cliente
@@ -21,16 +22,22 @@ def _enrich(db: Session, c: Cotizacion) -> dict:
     }
 
 
-def _generate_numero(db: Session) -> str:
+def _generate_numero(db: Session, empresa_id: Optional[int] = None) -> str:
     anio = date.today().year
-    count = db.query(func.count(Cotizacion.id)).filter(
+    q = db.query(func.count(Cotizacion.id)).filter(
         extract("year", Cotizacion.fecha_emision) == anio
-    ).scalar() or 0
+    )
+    if empresa_id is not None:
+        q = q.filter(Cotizacion.empresa_id == empresa_id)
+    count = q.scalar() or 0
     return f"COT-{anio}-{str(count + 1).zfill(3)}"
 
 
-def list_cotizaciones(db: Session, estado: str = "todos", cliente_id: int = None):
+def list_cotizaciones(db: Session, estado: str = "todos", cliente_id: int = None,
+                      empresa_id: Optional[int] = None):
     q = db.query(Cotizacion)
+    if empresa_id is not None:
+        q = q.filter(Cotizacion.empresa_id == empresa_id)
     if estado != "todos":
         q = q.filter(Cotizacion.estado == estado)
     if cliente_id:
@@ -39,16 +46,21 @@ def list_cotizaciones(db: Session, estado: str = "todos", cliente_id: int = None
     return [_enrich(db, c) for c in cotizaciones]
 
 
-def get_cotizacion(db: Session, cot_id: int):
-    c = db.query(Cotizacion).filter(Cotizacion.id == cot_id).first()
+def get_cotizacion(db: Session, cot_id: int, empresa_id: Optional[int] = None):
+    q = db.query(Cotizacion).filter(Cotizacion.id == cot_id)
+    if empresa_id is not None:
+        q = q.filter(Cotizacion.empresa_id == empresa_id)
+    c = q.first()
     if not c:
         raise HTTPException(404, "Cotización no encontrada")
     return _enrich(db, c)
 
 
-def create_cotizacion(db: Session, data: CotizacionCreate):
+def create_cotizacion(db: Session, data: CotizacionCreate,
+                      empresa_id: Optional[int] = None):
     c = Cotizacion(
-        numero=_generate_numero(db),
+        numero=_generate_numero(db, empresa_id),
+        empresa_id=empresa_id,
         **data.model_dump()
     )
     db.add(c)
@@ -57,8 +69,12 @@ def create_cotizacion(db: Session, data: CotizacionCreate):
     return _enrich(db, c)
 
 
-def update_cotizacion(db: Session, cot_id: int, data: CotizacionUpdate):
-    c = db.query(Cotizacion).filter(Cotizacion.id == cot_id).first()
+def update_cotizacion(db: Session, cot_id: int, data: CotizacionUpdate,
+                      empresa_id: Optional[int] = None):
+    q = db.query(Cotizacion).filter(Cotizacion.id == cot_id)
+    if empresa_id is not None:
+        q = q.filter(Cotizacion.empresa_id == empresa_id)
+    c = q.first()
     if not c:
         raise HTTPException(404, "Cotización no encontrada")
     for k, v in data.model_dump(exclude_unset=True).items():
@@ -67,8 +83,11 @@ def update_cotizacion(db: Session, cot_id: int, data: CotizacionUpdate):
     return _enrich(db, c)
 
 
-def delete_cotizacion(db: Session, cot_id: int):
-    c = db.query(Cotizacion).filter(Cotizacion.id == cot_id).first()
+def delete_cotizacion(db: Session, cot_id: int, empresa_id: Optional[int] = None):
+    q = db.query(Cotizacion).filter(Cotizacion.id == cot_id)
+    if empresa_id is not None:
+        q = q.filter(Cotizacion.empresa_id == empresa_id)
+    c = q.first()
     if not c:
         raise HTTPException(404, "Cotización no encontrada")
     db.delete(c)
@@ -76,8 +95,11 @@ def delete_cotizacion(db: Session, cot_id: int):
     return {"mensaje": "Cotización eliminada"}
 
 
-def convertir_venta(db: Session, cot_id: int):
-    c = db.query(Cotizacion).filter(Cotizacion.id == cot_id).first()
+def convertir_venta(db: Session, cot_id: int, empresa_id: Optional[int] = None):
+    q = db.query(Cotizacion).filter(Cotizacion.id == cot_id)
+    if empresa_id is not None:
+        q = q.filter(Cotizacion.empresa_id == empresa_id)
+    c = q.first()
     if not c:
         raise HTTPException(404, "Cotización no encontrada")
     if c.estado != "aprobada":
@@ -88,6 +110,7 @@ def convertir_venta(db: Session, cot_id: int):
         cliente_id=c.cliente_id, cotizacion_id=c.id,
         tipo_servicio=c.tipo_servicio, descripcion=c.descripcion,
         monto=c.monto, fecha=date.today(), estado="completada",
+        empresa_id=empresa_id,
     )
     db.add(venta)
     db.flush()

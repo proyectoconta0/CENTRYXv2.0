@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from app.core.security import (
-    RUBROS, ROLES_DISPONIBLES, get_current_usuario, require_administrador,
+    RUBROS, ROLES_DISPONIBLES, get_current_usuario, require_administrador, get_empresa_id,
 )
 from app.models.configuracion import ConfiguracionAlerta, ConfiguracionDocumento, ConfiguracionEmpresa
 from app.models.models import (
@@ -36,9 +36,14 @@ LOGO_TIPOS_VALIDOS = {"image/png", "image/jpeg", "image/jpg", "image/webp", "ima
 # Empresa
 # ══════════════════════════════════════════════════════════════════════════
 
-def _get_empresa(db: Session) -> ConfiguracionEmpresa:
-    empresa = db.query(ConfiguracionEmpresa).first()
+def _get_empresa(db: Session, empresa_id: Optional[int] = None) -> ConfiguracionEmpresa:
+    q = db.query(ConfiguracionEmpresa)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionEmpresa.id == empresa_id)
+    empresa = q.first()
     if not empresa:
+        if empresa_id is not None:
+            raise HTTPException(404, "Empresa no encontrada")
         empresa = ConfiguracionEmpresa(
             nombre_empresa="Centryx", color_principal="#1e40af", moneda_principal="PEN",
             onboarding_completado=False, tiempo_sesion_horas=8,
@@ -101,8 +106,12 @@ class EmpresaUpdate(BaseModel):
 
 
 @router.get("/empresa")
-def obtener_empresa(db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
-    return _serialize_empresa(_get_empresa(db))
+def obtener_empresa(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    return _serialize_empresa(_get_empresa(db, empresa_id))
 
 
 # Sin auth a propósito: la pantalla de Login todavía no tiene token y necesita
@@ -111,8 +120,11 @@ def obtener_empresa(db: Session = Depends(get_db), usuario: Usuario = Depends(ge
 # (smtp_host, smtp_usuario, whatsapp_soporte, email, teléfono, dirección...)
 # que no deben quedar accesibles sin login.
 @router.get("/empresa-publica")
-def obtener_empresa_publica(db: Session = Depends(get_db)):
-    empresa = _get_empresa(db)
+def obtener_empresa_publica(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    empresa = _get_empresa(db, empresa_id)
     return {
         "nombre_empresa": empresa.nombre_empresa or "",
         "ruc": empresa.ruc or "",
@@ -120,9 +132,13 @@ def obtener_empresa_publica(db: Session = Depends(get_db)):
 
 
 @router.put("/empresa")
-def actualizar_empresa(data: EmpresaUpdate, db: Session = Depends(get_db),
-                        usuario: Usuario = Depends(require_administrador)):
-    empresa = _get_empresa(db)
+def actualizar_empresa(
+    data: EmpresaUpdate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    empresa = _get_empresa(db, empresa_id)
     campos = data.dict(exclude_unset=True)
     if not campos.get("smtp_password"):
         # Campo enmascarado en el frontend: una cadena vacía significa
@@ -141,8 +157,12 @@ def actualizar_empresa(data: EmpresaUpdate, db: Session = Depends(get_db),
 
 
 @router.post("/empresa/logo")
-async def subir_logo(file: UploadFile = File(...), db: Session = Depends(get_db),
-                      usuario: Usuario = Depends(require_administrador)):
+async def subir_logo(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if file.content_type not in LOGO_TIPOS_VALIDOS:
         raise HTTPException(400, "Formato de imagen no válido. Usa PNG, JPG, WEBP o SVG.")
     contenido = await file.read()
@@ -154,7 +174,7 @@ async def subir_logo(file: UploadFile = File(...), db: Session = Depends(get_db)
     logo_base64 = base64.b64encode(contenido).decode("utf-8")
     logo_data_url = f"data:{file.content_type};base64,{logo_base64}"
 
-    empresa = _get_empresa(db)
+    empresa = _get_empresa(db, empresa_id)
     empresa.logo_base64 = logo_data_url
     empresa.updated_at = datetime.utcnow()
     db.commit()
@@ -162,8 +182,14 @@ async def subir_logo(file: UploadFile = File(...), db: Session = Depends(get_db)
 
 
 @router.get("/empresa/logo")
-def ver_logo(db: Session = Depends(get_db)):
-    empresa = db.query(ConfiguracionEmpresa).first()
+def ver_logo(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(ConfiguracionEmpresa)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionEmpresa.id == empresa_id)
+    empresa = q.first()
     if empresa and empresa.logo_base64:
         content_type, _, b64data = empresa.logo_base64.partition(",")
         content_type = content_type.removeprefix("data:").partition(";")[0] or "image/png"
@@ -174,10 +200,17 @@ def ver_logo(db: Session = Depends(get_db)):
 
 
 @router.get("/smtp/probar")
-def probar_conexion_smtp(db: Session = Depends(get_db), usuario: Usuario = Depends(require_administrador)):
+def probar_conexion_smtp(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     import smtplib
 
-    empresa = db.query(ConfiguracionEmpresa).first()
+    q = db.query(ConfiguracionEmpresa)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionEmpresa.id == empresa_id)
+    empresa = q.first()
     if not empresa or not empresa.smtp_host or not empresa.smtp_usuario or not empresa.smtp_password:
         return {"success": False, "mensaje": "Complete y guarde los datos SMTP antes de probar la conexión"}
 
@@ -200,8 +233,12 @@ def probar_conexion_smtp(db: Session = Depends(get_db), usuario: Usuario = Depen
 # ══════════════════════════════════════════════════════════════════════════
 
 @router.get("/rubro")
-def obtener_rubro(db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
-    empresa = _get_empresa(db)
+def obtener_rubro(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    empresa = _get_empresa(db, empresa_id)
     return {
         "rubro_actual":      empresa.rubro or "",
         "tipos_servicio":    json.loads(empresa.tipos_servicio_json) if empresa.tipos_servicio_json else [],
@@ -217,11 +254,15 @@ class RubroUpdate(BaseModel):
 
 
 @router.put("/rubro")
-def actualizar_rubro(data: RubroUpdate, db: Session = Depends(get_db),
-                      usuario: Usuario = Depends(require_administrador)):
+def actualizar_rubro(
+    data: RubroUpdate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if data.rubro not in RUBROS:
         raise HTTPException(400, "Rubro no reconocido")
-    empresa = _get_empresa(db)
+    empresa = _get_empresa(db, empresa_id)
     empresa.rubro = data.rubro
     tipos = data.tipos_servicio if data.tipos_servicio is not None else RUBROS[data.rubro]["tipos_servicio"]
     categorias = data.categorias_gastos if data.categorias_gastos is not None else RUBROS[data.rubro]["categorias_gastos"]
@@ -257,20 +298,35 @@ class UsuarioUpdateReq(BaseModel):
 
 
 @router.get("/usuarios")
-def listar_usuarios(db: Session = Depends(get_db), usuario: Usuario = Depends(require_administrador)):
-    rows = db.query(Usuario).order_by(Usuario.nombre.asc()).all()
+def listar_usuarios(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Usuario).order_by(Usuario.nombre.asc())
+    if empresa_id is not None:
+        q = q.filter(Usuario.empresa_id == empresa_id)
+    rows = q.all()
     return {"data": [_serialize_usuario(u) for u in rows], "roles_disponibles": ROLES_DISPONIBLES}
 
 
 @router.post("/usuarios")
-def crear_usuario(data: UsuarioCreateReq, db: Session = Depends(get_db),
-                   usuario: Usuario = Depends(require_administrador)):
-    if db.query(Usuario).filter(Usuario.email == data.email).first():
+def crear_usuario(
+    data: UsuarioCreateReq,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Usuario).filter(Usuario.email == data.email)
+    if empresa_id is not None:
+        q = q.filter(Usuario.empresa_id == empresa_id)
+    if q.first():
         raise HTTPException(400, "Ya existe un usuario con ese email")
     nuevo = Usuario(
         nombre=data.nombre, email=data.email,
         password=pwd_context.hash(data.password),
         rol=data.rol, activo=data.activo,
+        empresa_id=empresa_id,
     )
     db.add(nuevo)
     db.commit()
@@ -279,13 +335,24 @@ def crear_usuario(data: UsuarioCreateReq, db: Session = Depends(get_db),
 
 
 @router.put("/usuarios/{usuario_id}")
-def actualizar_usuario(usuario_id: int, data: UsuarioUpdateReq, db: Session = Depends(get_db),
-                        usuario: Usuario = Depends(require_administrador)):
-    target = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+def actualizar_usuario(
+    usuario_id: int,
+    data: UsuarioUpdateReq,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Usuario).filter(Usuario.id == usuario_id)
+    if empresa_id is not None:
+        q = q.filter(Usuario.empresa_id == empresa_id)
+    target = q.first()
     if not target:
         raise HTTPException(404, "Usuario no encontrado")
     if data.email and data.email != target.email:
-        if db.query(Usuario).filter(Usuario.email == data.email, Usuario.id != usuario_id).first():
+        dup_q = db.query(Usuario).filter(Usuario.email == data.email, Usuario.id != usuario_id)
+        if empresa_id is not None:
+            dup_q = dup_q.filter(Usuario.empresa_id == empresa_id)
+        if dup_q.first():
             raise HTTPException(400, "Ya existe un usuario con ese email")
         target.email = data.email
     if data.nombre is not None:
@@ -302,11 +369,18 @@ def actualizar_usuario(usuario_id: int, data: UsuarioUpdateReq, db: Session = De
 
 
 @router.delete("/usuarios/{usuario_id}")
-def eliminar_usuario(usuario_id: int, db: Session = Depends(get_db),
-                      usuario: Usuario = Depends(require_administrador)):
+def eliminar_usuario(
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if usuario_id == usuario.id:
         raise HTTPException(400, "No puedes eliminar tu propio usuario")
-    target = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    q = db.query(Usuario).filter(Usuario.id == usuario_id)
+    if empresa_id is not None:
+        q = q.filter(Usuario.empresa_id == empresa_id)
+    target = q.first()
     if not target:
         raise HTTPException(404, "Usuario no encontrado")
     db.delete(target)
@@ -334,12 +408,18 @@ LABEL_DOCUMENTO = {t[0]: t[1] for t in DOCUMENTOS_DEFAULT}
 ORDEN_DOCUMENTO = {t[0]: i for i, t in enumerate(DOCUMENTOS_DEFAULT)}
 
 
-def _asegurar_documentos(db: Session):
-    existentes = {d.tipo_documento for d in db.query(ConfiguracionDocumento).all()}
+def _asegurar_documentos(db: Session, empresa_id: Optional[int] = None):
+    q = db.query(ConfiguracionDocumento)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionDocumento.empresa_id == empresa_id)
+    existentes = {d.tipo_documento for d in q.all()}
     creado = False
     for tipo, _label, prefijo, numero in DOCUMENTOS_DEFAULT:
         if tipo not in existentes:
-            db.add(ConfiguracionDocumento(tipo_documento=tipo, prefijo=prefijo, proximo_numero=numero))
+            doc = ConfiguracionDocumento(tipo_documento=tipo, prefijo=prefijo, proximo_numero=numero)
+            if empresa_id is not None:
+                doc.empresa_id = empresa_id
+            db.add(doc)
             creado = True
     if creado:
         db.commit()
@@ -358,9 +438,16 @@ def _serialize_documento(d: ConfiguracionDocumento) -> dict:
 
 
 @router.get("/documentos")
-def listar_documentos(db: Session = Depends(get_db), usuario: Usuario = Depends(require_administrador)):
-    _asegurar_documentos(db)
-    rows = db.query(ConfiguracionDocumento).all()
+def listar_documentos(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    _asegurar_documentos(db, empresa_id)
+    q = db.query(ConfiguracionDocumento)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionDocumento.empresa_id == empresa_id)
+    rows = q.all()
     rows.sort(key=lambda d: ORDEN_DOCUMENTO.get(d.tipo_documento, 99))
     return {"data": [_serialize_documento(d) for d in rows]}
 
@@ -382,38 +469,60 @@ class DocumentoCreate(BaseModel):
 
 
 @router.post("/documentos")
-def crear_documento(data: DocumentoCreate, db: Session = Depends(get_db),
-                     usuario: Usuario = Depends(require_administrador)):
-    _asegurar_documentos(db)
+def crear_documento(
+    data: DocumentoCreate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    _asegurar_documentos(db, empresa_id)
     tipo = data.tipo_documento.strip()
     if not tipo:
         raise HTTPException(400, "El tipo de documento es requerido")
-    existente = db.query(ConfiguracionDocumento).filter(ConfiguracionDocumento.tipo_documento == tipo).first()
-    if existente:
+    q = db.query(ConfiguracionDocumento).filter(ConfiguracionDocumento.tipo_documento == tipo)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionDocumento.empresa_id == empresa_id)
+    if q.first():
         raise HTTPException(400, "Ya existe un documento con ese tipo")
-    db.add(ConfiguracionDocumento(
+    doc = ConfiguracionDocumento(
         tipo_documento=tipo,
         prefijo=data.prefijo.strip(),
         proximo_numero=data.proximo_numero or 1,
-    ))
+    )
+    if empresa_id is not None:
+        doc.empresa_id = empresa_id
+    db.add(doc)
     db.commit()
-    rows = db.query(ConfiguracionDocumento).all()
+    q2 = db.query(ConfiguracionDocumento)
+    if empresa_id is not None:
+        q2 = q2.filter(ConfiguracionDocumento.empresa_id == empresa_id)
+    rows = q2.all()
     rows.sort(key=lambda d: ORDEN_DOCUMENTO.get(d.tipo_documento, 99))
     return {"data": [_serialize_documento(d) for d in rows]}
 
 
 @router.put("/documentos")
-def actualizar_documentos(data: DocumentosUpdate, db: Session = Depends(get_db),
-                           usuario: Usuario = Depends(require_administrador)):
-    _asegurar_documentos(db)
-    por_tipo = {d.tipo_documento: d for d in db.query(ConfiguracionDocumento).all()}
+def actualizar_documentos(
+    data: DocumentosUpdate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    _asegurar_documentos(db, empresa_id)
+    q = db.query(ConfiguracionDocumento)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionDocumento.empresa_id == empresa_id)
+    por_tipo = {d.tipo_documento: d for d in q.all()}
     for item in data.documentos:
         row = por_tipo.get(item.tipo_documento)
         if row:
             row.prefijo = item.prefijo
             row.proximo_numero = item.proximo_numero
     db.commit()
-    rows = db.query(ConfiguracionDocumento).all()
+    q2 = db.query(ConfiguracionDocumento)
+    if empresa_id is not None:
+        q2 = q2.filter(ConfiguracionDocumento.empresa_id == empresa_id)
+    rows = q2.all()
     rows.sort(key=lambda d: ORDEN_DOCUMENTO.get(d.tipo_documento, 99))
     return {"data": [_serialize_documento(d) for d in rows]}
 
@@ -443,12 +552,18 @@ ALERTAS_META = {
 }
 
 
-def _asegurar_alertas(db: Session):
-    existentes = {a.tipo_alerta for a in db.query(ConfiguracionAlerta).all()}
+def _asegurar_alertas(db: Session, empresa_id: Optional[int] = None):
+    q = db.query(ConfiguracionAlerta)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionAlerta.empresa_id == empresa_id)
+    existentes = {a.tipo_alerta for a in q.all()}
     creado = False
     for tipo, umbral in ALERTAS_DEFAULT.items():
         if tipo not in existentes:
-            db.add(ConfiguracionAlerta(tipo_alerta=tipo, activa=True, valor_umbral=umbral, created_at=datetime.utcnow()))
+            alerta = ConfiguracionAlerta(tipo_alerta=tipo, activa=True, valor_umbral=umbral, created_at=datetime.utcnow())
+            if empresa_id is not None:
+                alerta.empresa_id = empresa_id
+            db.add(alerta)
             creado = True
     if creado:
         db.commit()
@@ -469,9 +584,16 @@ def _serialize_alerta(a: ConfiguracionAlerta) -> dict:
 
 
 @router.get("/alertas")
-def listar_alertas(db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
-    _asegurar_alertas(db)
-    rows = db.query(ConfiguracionAlerta).all()
+def listar_alertas(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    _asegurar_alertas(db, empresa_id)
+    q = db.query(ConfiguracionAlerta)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionAlerta.empresa_id == empresa_id)
+    rows = q.all()
     return {"data": [_serialize_alerta(a) for a in rows]}
 
 
@@ -486,17 +608,27 @@ class AlertasUpdate(BaseModel):
 
 
 @router.put("/alertas")
-def actualizar_alertas(data: AlertasUpdate, db: Session = Depends(get_db),
-                        usuario: Usuario = Depends(require_administrador)):
-    _asegurar_alertas(db)
-    por_tipo = {a.tipo_alerta: a for a in db.query(ConfiguracionAlerta).all()}
+def actualizar_alertas(
+    data: AlertasUpdate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    _asegurar_alertas(db, empresa_id)
+    q = db.query(ConfiguracionAlerta)
+    if empresa_id is not None:
+        q = q.filter(ConfiguracionAlerta.empresa_id == empresa_id)
+    por_tipo = {a.tipo_alerta: a for a in q.all()}
     for item in data.alertas:
         row = por_tipo.get(item.tipo_alerta)
         if row:
             row.activa = item.activa
             row.valor_umbral = item.valor_umbral
     db.commit()
-    rows = db.query(ConfiguracionAlerta).all()
+    q2 = db.query(ConfiguracionAlerta)
+    if empresa_id is not None:
+        q2 = q2.filter(ConfiguracionAlerta.empresa_id == empresa_id)
+    rows = q2.all()
     return {"data": [_serialize_alerta(a) for a in rows]}
 
 
@@ -505,14 +637,22 @@ def actualizar_alertas(data: AlertasUpdate, db: Session = Depends(get_db),
 # ══════════════════════════════════════════════════════════════════════════
 
 @router.get("/onboarding-status")
-def onboarding_status(db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
-    empresa = _get_empresa(db)
+def onboarding_status(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    empresa = _get_empresa(db, empresa_id)
     return {"completado": bool(empresa.onboarding_completado)}
 
 
 @router.post("/resetear-onboarding")
-def resetear_onboarding(db: Session = Depends(get_db), usuario: Usuario = Depends(require_administrador)):
-    empresa = _get_empresa(db)
+def resetear_onboarding(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    empresa = _get_empresa(db, empresa_id)
     empresa.onboarding_completado = False
     empresa.updated_at = datetime.utcnow()
     db.commit()
@@ -524,12 +664,29 @@ def resetear_onboarding(db: Session = Depends(get_db), usuario: Usuario = Depend
 # ══════════════════════════════════════════════════════════════════════════
 
 @router.get("/exportar-data")
-def exportar_data(db: Session = Depends(get_db), usuario: Usuario = Depends(require_administrador)):
-    clientes = db.query(Cliente).all()
-    proveedores = db.query(Proveedor).all()
-    ventas = db.query(VentaComercial).order_by(VentaComercial.fecha.desc()).all()
-    gastos = db.query(Gasto).order_by(Gasto.fecha.desc()).all()
-    usuarios = db.query(Usuario).order_by(Usuario.nombre.asc()).all()
+def exportar_data(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q_clientes = db.query(Cliente)
+    q_proveedores = db.query(Proveedor)
+    q_ventas = db.query(VentaComercial).order_by(VentaComercial.fecha.desc())
+    q_gastos = db.query(Gasto).order_by(Gasto.fecha.desc())
+    q_usuarios = db.query(Usuario).order_by(Usuario.nombre.asc())
+
+    if empresa_id is not None:
+        q_clientes = q_clientes.filter(Cliente.empresa_id == empresa_id)
+        q_proveedores = q_proveedores.filter(Proveedor.empresa_id == empresa_id)
+        q_ventas = q_ventas.filter(VentaComercial.empresa_id == empresa_id)
+        q_gastos = q_gastos.filter(Gasto.empresa_id == empresa_id)
+        q_usuarios = q_usuarios.filter(Usuario.empresa_id == empresa_id)
+
+    clientes = q_clientes.all()
+    proveedores = q_proveedores.all()
+    ventas = q_ventas.all()
+    gastos = q_gastos.all()
+    usuarios = q_usuarios.all()
 
     sheets = [
         {
@@ -591,20 +748,36 @@ def _serialize_categoria_area(row) -> dict:
 
 
 @router.get("/categorias-gasto")
-def listar_categorias_gasto(db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
-    rows = db.query(CategoriaGasto).order_by(CategoriaGasto.nombre.asc()).all()
+def listar_categorias_gasto(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(CategoriaGasto).order_by(CategoriaGasto.nombre.asc())
+    if empresa_id is not None:
+        q = q.filter(CategoriaGasto.empresa_id == empresa_id)
+    rows = q.all()
     return [_serialize_categoria_area(r) for r in rows]
 
 
 @router.post("/categorias-gasto")
-def crear_categoria_gasto(data: CategoriaAreaGastoReq, db: Session = Depends(get_db),
-                           usuario: Usuario = Depends(require_administrador)):
+def crear_categoria_gasto(
+    data: CategoriaAreaGastoReq,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     nombre = data.nombre.strip()
     if not nombre:
         raise HTTPException(400, "El nombre es obligatorio")
-    if db.query(CategoriaGasto).filter(CategoriaGasto.nombre == nombre).first():
+    q = db.query(CategoriaGasto).filter(CategoriaGasto.nombre == nombre)
+    if empresa_id is not None:
+        q = q.filter(CategoriaGasto.empresa_id == empresa_id)
+    if q.first():
         raise HTTPException(400, f"Ya existe la categoría {nombre}")
     nueva = CategoriaGasto(nombre=nombre, activo=True, created_at=datetime.utcnow())
+    if empresa_id is not None:
+        nueva.empresa_id = empresa_id
     db.add(nueva)
     db.commit()
     db.refresh(nueva)
@@ -612,17 +785,26 @@ def crear_categoria_gasto(data: CategoriaAreaGastoReq, db: Session = Depends(get
 
 
 @router.put("/categorias-gasto/{categoria_id}")
-def actualizar_categoria_gasto(categoria_id: int, data: CategoriaAreaGastoReq, db: Session = Depends(get_db),
-                                usuario: Usuario = Depends(require_administrador)):
-    target = db.query(CategoriaGasto).filter(CategoriaGasto.id == categoria_id).first()
+def actualizar_categoria_gasto(
+    categoria_id: int,
+    data: CategoriaAreaGastoReq,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(CategoriaGasto).filter(CategoriaGasto.id == categoria_id)
+    if empresa_id is not None:
+        q = q.filter(CategoriaGasto.empresa_id == empresa_id)
+    target = q.first()
     if not target:
         raise HTTPException(404, "Categoría no encontrada")
     nombre = data.nombre.strip()
     if not nombre:
         raise HTTPException(400, "El nombre es obligatorio")
-    if nombre != target.nombre and db.query(CategoriaGasto).filter(
-        CategoriaGasto.nombre == nombre, CategoriaGasto.id != categoria_id
-    ).first():
+    dup_q = db.query(CategoriaGasto).filter(CategoriaGasto.nombre == nombre, CategoriaGasto.id != categoria_id)
+    if empresa_id is not None:
+        dup_q = dup_q.filter(CategoriaGasto.empresa_id == empresa_id)
+    if nombre != target.nombre and dup_q.first():
         raise HTTPException(400, f"Ya existe la categoría {nombre}")
     target.nombre = nombre
     if data.activo is not None:
@@ -633,9 +815,16 @@ def actualizar_categoria_gasto(categoria_id: int, data: CategoriaAreaGastoReq, d
 
 
 @router.delete("/categorias-gasto/{categoria_id}")
-def desactivar_categoria_gasto(categoria_id: int, db: Session = Depends(get_db),
-                                usuario: Usuario = Depends(require_administrador)):
-    target = db.query(CategoriaGasto).filter(CategoriaGasto.id == categoria_id).first()
+def desactivar_categoria_gasto(
+    categoria_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(CategoriaGasto).filter(CategoriaGasto.id == categoria_id)
+    if empresa_id is not None:
+        q = q.filter(CategoriaGasto.empresa_id == empresa_id)
+    target = q.first()
     if not target:
         raise HTTPException(404, "Categoría no encontrada")
     target.activo = False
@@ -644,20 +833,36 @@ def desactivar_categoria_gasto(categoria_id: int, db: Session = Depends(get_db),
 
 
 @router.get("/areas-gasto")
-def listar_areas_gasto(db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
-    rows = db.query(AreaGasto).order_by(AreaGasto.nombre.asc()).all()
+def listar_areas_gasto(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(AreaGasto).order_by(AreaGasto.nombre.asc())
+    if empresa_id is not None:
+        q = q.filter(AreaGasto.empresa_id == empresa_id)
+    rows = q.all()
     return [_serialize_categoria_area(r) for r in rows]
 
 
 @router.post("/areas-gasto")
-def crear_area_gasto(data: CategoriaAreaGastoReq, db: Session = Depends(get_db),
-                      usuario: Usuario = Depends(require_administrador)):
+def crear_area_gasto(
+    data: CategoriaAreaGastoReq,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     nombre = data.nombre.strip()
     if not nombre:
         raise HTTPException(400, "El nombre es obligatorio")
-    if db.query(AreaGasto).filter(AreaGasto.nombre == nombre).first():
+    q = db.query(AreaGasto).filter(AreaGasto.nombre == nombre)
+    if empresa_id is not None:
+        q = q.filter(AreaGasto.empresa_id == empresa_id)
+    if q.first():
         raise HTTPException(400, f"Ya existe el área {nombre}")
     nueva = AreaGasto(nombre=nombre, activo=True, created_at=datetime.utcnow())
+    if empresa_id is not None:
+        nueva.empresa_id = empresa_id
     db.add(nueva)
     db.commit()
     db.refresh(nueva)
@@ -665,17 +870,26 @@ def crear_area_gasto(data: CategoriaAreaGastoReq, db: Session = Depends(get_db),
 
 
 @router.put("/areas-gasto/{area_id}")
-def actualizar_area_gasto(area_id: int, data: CategoriaAreaGastoReq, db: Session = Depends(get_db),
-                           usuario: Usuario = Depends(require_administrador)):
-    target = db.query(AreaGasto).filter(AreaGasto.id == area_id).first()
+def actualizar_area_gasto(
+    area_id: int,
+    data: CategoriaAreaGastoReq,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(AreaGasto).filter(AreaGasto.id == area_id)
+    if empresa_id is not None:
+        q = q.filter(AreaGasto.empresa_id == empresa_id)
+    target = q.first()
     if not target:
         raise HTTPException(404, "Área no encontrada")
     nombre = data.nombre.strip()
     if not nombre:
         raise HTTPException(400, "El nombre es obligatorio")
-    if nombre != target.nombre and db.query(AreaGasto).filter(
-        AreaGasto.nombre == nombre, AreaGasto.id != area_id
-    ).first():
+    dup_q = db.query(AreaGasto).filter(AreaGasto.nombre == nombre, AreaGasto.id != area_id)
+    if empresa_id is not None:
+        dup_q = dup_q.filter(AreaGasto.empresa_id == empresa_id)
+    if nombre != target.nombre and dup_q.first():
         raise HTTPException(400, f"Ya existe el área {nombre}")
     target.nombre = nombre
     if data.activo is not None:
@@ -686,9 +900,16 @@ def actualizar_area_gasto(area_id: int, data: CategoriaAreaGastoReq, db: Session
 
 
 @router.delete("/areas-gasto/{area_id}")
-def desactivar_area_gasto(area_id: int, db: Session = Depends(get_db),
-                           usuario: Usuario = Depends(require_administrador)):
-    target = db.query(AreaGasto).filter(AreaGasto.id == area_id).first()
+def desactivar_area_gasto(
+    area_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(AreaGasto).filter(AreaGasto.id == area_id)
+    if empresa_id is not None:
+        q = q.filter(AreaGasto.empresa_id == empresa_id)
+    target = q.first()
     if not target:
         raise HTTPException(404, "Área no encontrada")
     target.activo = False
@@ -738,23 +959,35 @@ def _insertar_con_savepoint(db: Session, instancia) -> bool:
 
 
 @router.get("/backup/exportar")
-def exportar_backup(http_request: Request, db: Session = Depends(get_db),
-                     usuario: Usuario = Depends(require_administrador)):
+def exportar_backup(
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    def _q(modelo):
+        q = db.query(modelo)
+        if empresa_id is not None and hasattr(modelo, "empresa_id"):
+            q = q.filter(modelo.empresa_id == empresa_id)
+        return q
+
     datos = {
         "version": BACKUP_VERSION,
         "fecha_exportacion": datetime.utcnow().isoformat(),
         "exportado_por": usuario.nombre,
         "datos": {
-            "clientes":                [_serializar_registro(c) for c in db.query(Cliente).filter(Cliente.activo == True).all()],
-            "proveedores":              [_serializar_registro(p) for p in db.query(Proveedor).filter(Proveedor.estado == "Activo").all()],
-            "ventas":                   [_serializar_registro(v) for v in db.query(VentaComercial).all()],
-            "gastos":                   [_serializar_registro(g) for g in db.query(Gasto).all()],
-            "pagos_cobranza":           [_serializar_registro(p) for p in db.query(PagoCobranza).all()],
-            "pagos_gastos":             [_serializar_registro(p) for p in db.query(PagoGasto).all()],
-            "prestamos":                [_serializar_registro(p) for p in db.query(Prestamo).all()],
-            "cuotas_prestamo":          [_serializar_registro(c) for c in db.query(CuotaPrestamo).all()],
-            "garantias":                [_serializar_registro(g) for g in db.query(Garantia).all()],
-            "flujo_caja":               [_serializar_registro(f) for f in db.query(MovimientoCaja).all()],
+            "clientes":                [_serializar_registro(c) for c in _q(Cliente).filter(Cliente.activo == True).all()],
+            "proveedores":              [_serializar_registro(p) for p in _q(Proveedor).filter(Proveedor.estado == "Activo").all()],
+            "ventas":                   [_serializar_registro(v) for v in _q(VentaComercial).all()],
+            "gastos":                   [_serializar_registro(g) for g in _q(Gasto).all()],
+            "pagos_cobranza":           [_serializar_registro(p) for p in db.query(PagoCobranza).join(
+                VentaComercial, PagoCobranza.comprobante_id == VentaComercial.id
+            ).filter(VentaComercial.empresa_id == empresa_id).all()] if empresa_id is not None else [_serializar_registro(p) for p in db.query(PagoCobranza).all()],
+            "pagos_gastos":             [_serializar_registro(p) for p in _q(PagoGasto).all()],
+            "prestamos":                [_serializar_registro(p) for p in _q(Prestamo).all()],
+            "cuotas_prestamo":          [_serializar_registro(c) for c in _q(CuotaPrestamo).all()],
+            "garantias":                [_serializar_registro(g) for g in _q(Garantia).all()],
+            "flujo_caja":               [_serializar_registro(f) for f in _q(MovimientoCaja).all()],
             "conciliaciones":           [_serializar_registro(c) for c in db.query(ConciliacionBancaria).all()],
             "movimientos_conciliacion": [_serializar_registro(m) for m in db.query(MovimientoConciliacion).all()],
         },
@@ -776,8 +1009,13 @@ def exportar_backup(http_request: Request, db: Session = Depends(get_db),
 
 
 @router.post("/backup/importar")
-async def importar_backup(http_request: Request, archivo: UploadFile = File(...), db: Session = Depends(get_db),
-                           usuario: Usuario = Depends(require_administrador)):
+async def importar_backup(
+    http_request: Request,
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     try:
         contenido = json.loads(await archivo.read())
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -809,12 +1047,18 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
         importados = 0
         for c in datos["clientes"]:
             old_id = c.get("id")
-            existe = db.query(Cliente).filter(Cliente.ruc == c.get("ruc")).first() if c.get("ruc") else None
+            q = db.query(Cliente).filter(Cliente.ruc == c.get("ruc")) if c.get("ruc") else None
+            if q is not None and empresa_id is not None:
+                q = q.filter(Cliente.empresa_id == empresa_id)
+            existe = q.first() if q is not None else None
             if existe:
                 if old_id is not None:
                     mapa_clientes[old_id] = existe.id
                 continue
-            nuevo = Cliente(**_campos_validos(Cliente, c))
+            campos = _campos_validos(Cliente, c)
+            if empresa_id is not None:
+                campos["empresa_id"] = empresa_id
+            nuevo = Cliente(**campos)
             if _insertar_con_savepoint(db, nuevo):
                 importados += 1
                 if old_id is not None:
@@ -827,14 +1071,20 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
         importados = 0
         for p in datos["proveedores"]:
             old_id = p.get("id")
-            existe = db.query(Proveedor).filter(
+            q = db.query(Proveedor).filter(
                 Proveedor.numero_documento == p.get("numero_documento")
-            ).first() if p.get("numero_documento") else None
+            ) if p.get("numero_documento") else None
+            if q is not None and empresa_id is not None:
+                q = q.filter(Proveedor.empresa_id == empresa_id)
+            existe = q.first() if q is not None else None
             if existe:
                 if old_id is not None:
                     mapa_proveedores[old_id] = existe.id
                 continue
-            nuevo = Proveedor(**_campos_validos(Proveedor, p))
+            campos = _campos_validos(Proveedor, p)
+            if empresa_id is not None:
+                campos["empresa_id"] = empresa_id
+            nuevo = Proveedor(**campos)
             if _insertar_con_savepoint(db, nuevo):
                 importados += 1
                 if old_id is not None:
@@ -847,9 +1097,12 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
         importados = 0
         for v in datos["ventas"]:
             old_id = v.get("id")
-            existe = db.query(VentaComercial).filter(
+            q = db.query(VentaComercial).filter(
                 VentaComercial.numero_factura == v.get("numero_factura")
-            ).first() if v.get("numero_factura") else None
+            ) if v.get("numero_factura") else None
+            if q is not None and empresa_id is not None:
+                q = q.filter(VentaComercial.empresa_id == empresa_id)
+            existe = q.first() if q is not None else None
             if existe:
                 if old_id is not None:
                     mapa_ventas[old_id] = existe.id
@@ -861,6 +1114,8 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
             # antes en este mismo bucle (mejor esfuerzo, sin dos pasadas).
             if campos.get("comprobante_relacionado_id") is not None:
                 campos["comprobante_relacionado_id"] = mapa_ventas.get(campos["comprobante_relacionado_id"])
+            if empresa_id is not None:
+                campos["empresa_id"] = empresa_id
             nuevo = VentaComercial(**campos)
             if _insertar_con_savepoint(db, nuevo):
                 importados += 1
@@ -876,10 +1131,13 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
             old_id = g.get("id")
             existe = None
             if g.get("numero_comprobante") or g.get("numero_documento"):
-                existe = db.query(Gasto).filter(
+                q = db.query(Gasto).filter(
                     Gasto.numero_comprobante == g.get("numero_comprobante"),
                     Gasto.numero_documento == g.get("numero_documento"),
-                ).first()
+                )
+                if empresa_id is not None:
+                    q = q.filter(Gasto.empresa_id == empresa_id)
+                existe = q.first()
             if existe:
                 if old_id is not None:
                     mapa_gastos[old_id] = existe.id
@@ -892,6 +1150,8 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
             # descarta el vínculo en vez de dejar el id viejo.
             if campos.get("cuota_prestamo_id") is not None:
                 campos["cuota_prestamo_id"] = None
+            if empresa_id is not None:
+                campos["empresa_id"] = empresa_id
             nuevo = Gasto(**campos)
             if _insertar_con_savepoint(db, nuevo):
                 importados += 1
@@ -937,7 +1197,10 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
         importados = 0
         for p in datos["prestamos"]:
             old_id = p.get("id")
-            nuevo = Prestamo(**_campos_validos(Prestamo, p))
+            campos = _campos_validos(Prestamo, p)
+            if empresa_id is not None:
+                campos["empresa_id"] = empresa_id
+            nuevo = Prestamo(**campos)
             if _insertar_con_savepoint(db, nuevo):
                 importados += 1
                 if old_id is not None:
@@ -967,7 +1230,10 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
     if "garantias" in datos:
         importados = 0
         for g in datos["garantias"]:
-            nuevo = Garantia(**_campos_validos(Garantia, g))
+            campos = _campos_validos(Garantia, g)
+            if empresa_id is not None:
+                campos["empresa_id"] = empresa_id
+            nuevo = Garantia(**campos)
             if _insertar_con_savepoint(db, nuevo):
                 importados += 1
         resumen["garantias"] = importados
@@ -976,7 +1242,10 @@ async def importar_backup(http_request: Request, archivo: UploadFile = File(...)
     if "flujo_caja" in datos:
         importados = 0
         for f in datos["flujo_caja"]:
-            nuevo = MovimientoCaja(**_campos_validos(MovimientoCaja, f))
+            campos = _campos_validos(MovimientoCaja, f)
+            if empresa_id is not None:
+                campos["empresa_id"] = empresa_id
+            nuevo = MovimientoCaja(**campos)
             if _insertar_con_savepoint(db, nuevo):
                 importados += 1
         resumen["flujo_caja"] = importados
@@ -1000,8 +1269,13 @@ class LimpiarRegistrosReq(BaseModel):
 
 
 @router.delete("/backup/limpiar")
-def limpiar_registros(data: LimpiarRegistrosReq, http_request: Request, db: Session = Depends(get_db),
-                       usuario: Usuario = Depends(require_administrador)):
+def limpiar_registros(
+    data: LimpiarRegistrosReq,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if data.confirmar != "ELIMINAR_TODO":
         raise HTTPException(400, "Confirmación incorrecta")
 
@@ -1010,19 +1284,32 @@ def limpiar_registros(data: LimpiarRegistrosReq, http_request: Request, db: Sess
     # y CuotaPrestamo antes que Prestamo/MovimientoCaja (CuotaPrestamo.
     # movimiento_caja_id referencia movimientos_caja).
     try:
-        db.query(MovimientoConciliacion).delete()
-        db.query(ConciliacionBancaria).delete()
-        db.query(PagoGarantia).delete()
-        db.query(PagoCobranza).delete()
-        db.query(PagoGasto).delete()
-        db.query(Gasto).delete()
-        db.query(VentaComercial).delete()
-        db.query(CuotaPrestamo).delete()
-        db.query(Garantia).delete()
-        db.query(Proveedor).delete()
-        db.query(Cliente).delete()
-        db.query(Prestamo).delete()
-        db.query(MovimientoCaja).delete()
+        def _del(modelo, extra_filter=None):
+            q = db.query(modelo)
+            if empresa_id is not None and hasattr(modelo, "empresa_id"):
+                q = q.filter(modelo.empresa_id == empresa_id)
+            if extra_filter is not None:
+                q = q.filter(extra_filter)
+            q.delete(synchronize_session=False)
+
+        db.query(MovimientoConciliacion).delete(synchronize_session=False)
+        db.query(ConciliacionBancaria).delete(synchronize_session=False)
+        _del(PagoGarantia)
+        # PagoCobranza: filtra via join con VentaComercial
+        if empresa_id is not None:
+            sub = db.query(VentaComercial.id).filter(VentaComercial.empresa_id == empresa_id).subquery()
+            db.query(PagoCobranza).filter(PagoCobranza.comprobante_id.in_(sub)).delete(synchronize_session=False)
+        else:
+            db.query(PagoCobranza).delete(synchronize_session=False)
+        _del(PagoGasto)
+        _del(Gasto)
+        _del(VentaComercial)
+        _del(CuotaPrestamo)
+        _del(Garantia)
+        _del(Proveedor)
+        _del(Cliente)
+        _del(Prestamo)
+        _del(MovimientoCaja)
         db.commit()
     except Exception as e:
         db.rollback()

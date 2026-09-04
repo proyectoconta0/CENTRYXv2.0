@@ -8,6 +8,7 @@ class Usuario(Base):
     __tablename__ = "usuarios"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     nombre = Column(String(100), nullable=False)
     email = Column(String(100), unique=True, nullable=False)
     password = Column(String(255), nullable=False)
@@ -19,6 +20,7 @@ class Cliente(Base):
     __tablename__ = "clientes"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     razon_social = Column(String(200), nullable=False)
     ruc = Column(String(11), unique=True, nullable=False)
     contacto = Column(String(100))
@@ -96,6 +98,7 @@ class Gasto(Base):
     __tablename__ = "gastos"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     fecha = Column(Date, nullable=False, index=True)
     categoria = Column(String(100), nullable=False)
     descripcion = Column(String(300))
@@ -199,6 +202,7 @@ class ProveedorGasto(Base):
     __tablename__ = "proveedores_gastos"
 
     id               = Column(Integer, primary_key=True, index=True)
+    empresa_id       = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     tipo_documento   = Column(String(50))                          # RUC | DNI | Carnet de Extranjería
     numero_documento = Column(String(20), unique=True, index=True, nullable=False)
     nombre_proveedor = Column(String(200), nullable=False)
@@ -210,6 +214,7 @@ class Proveedor(Base):
     __tablename__ = "proveedores"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     tipo_documento = Column(String(30))                    # RUC | DNI | Carnet de Extranjería
     numero_documento = Column(String(20), unique=True, index=True, nullable=False)
     razon_social = Column(String(200), nullable=False)
@@ -237,6 +242,7 @@ class FlujoCaja(Base):
     __tablename__ = "flujo_caja"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     mes = Column(Integer, nullable=False)
     anio = Column(Integer, nullable=False)
     ingresos_proyectados = Column(Float, default=0)
@@ -250,6 +256,7 @@ class DetraccionLote(Base):
     __tablename__ = "detracciones_lotes"
 
     id                = Column(Integer, primary_key=True, index=True)
+    empresa_id        = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     numero_lote       = Column(Integer, nullable=False)
     fecha             = Column(Date, nullable=False)
     monto_total       = Column(Float, nullable=False)
@@ -267,6 +274,7 @@ class LoteDetraccion(Base):
     __tablename__ = "detraccion_lotes"
 
     id             = Column(Integer, primary_key=True, index=True)
+    empresa_id     = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     numero_lote    = Column(String(4), nullable=False, unique=True)
     fecha          = Column(Date, nullable=False)
     importe_total  = Column(Float, nullable=False, default=0)
@@ -305,6 +313,7 @@ class OrdenPago(Base):
     __tablename__ = "ordenes_pago"
 
     id               = Column(Integer, primary_key=True, index=True)
+    empresa_id       = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     numero_orden     = Column(String(20), nullable=False, unique=True)   # OP-0001
     proveedor_id     = Column(Integer, ForeignKey("proveedores.id"), nullable=True)
     ruc_proveedor    = Column(String(20), nullable=True)
@@ -341,6 +350,7 @@ class OrdenServicio(Base):
     __tablename__ = "ordenes_servicio"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     numero_orden = Column(String(20), unique=True, index=True)         # OS-0001
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
     tipo_servicio = Column(String(100))
@@ -369,6 +379,7 @@ class Empleado(Base):
     __tablename__ = "empleados"
 
     id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     nombre = Column(String(100), nullable=False)
     cargo = Column(String(100))
     sueldo = Column(Float)
@@ -382,7 +393,8 @@ class CategoriaGasto(Base):
     __tablename__ = "categorias_gasto"
 
     id = Column(Integer, primary_key=True)
-    nombre = Column(String(100), nullable=False, unique=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
+    nombre = Column(String(100), nullable=False)
     activo = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -391,7 +403,8 @@ class AreaGasto(Base):
     __tablename__ = "areas_gasto"
 
     id = Column(Integer, primary_key=True)
-    nombre = Column(String(100), nullable=False, unique=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
+    nombre = Column(String(100), nullable=False)
     activo = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -400,6 +413,7 @@ class Garantia(Base):
     __tablename__ = "garantias"
 
     id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     cliente_ruc = Column(String(11), nullable=False)
     cliente_nombre = Column(String(200), nullable=False)
     monto = Column(Float, nullable=False)
@@ -429,6 +443,7 @@ class MovimientoCaja(Base):
     __tablename__ = "movimientos_caja"
 
     id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     fecha = Column(Date, nullable=False)
     tipo = Column(String(20), nullable=False)  # ingreso / salida
     categoria = Column(String(100), nullable=True)
@@ -466,6 +481,7 @@ class CreditoCliente(Base):
     __tablename__ = "creditos_cliente"
 
     id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     cliente_ruc = Column(String(11), nullable=False)
     cliente_nombre = Column(String(200), nullable=False)
     origen = Column(String(50))
@@ -483,6 +499,7 @@ class Prestamo(Base):
     __tablename__ = "prestamos"
 
     id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     tipo = Column(String(20), nullable=False)
     # "recibido_banco" / "recibido_tercero" / "otorgado_tercero" / "otorgado_empleado"
 

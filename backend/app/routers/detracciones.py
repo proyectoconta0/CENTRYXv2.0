@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.comercial import VentaComercial
 from app.models.models import Gasto, DetraccionLote, LoteDetraccion, LoteDetraccionDetalle, Proveedor
 from app.services.empresa_header import get_empresa_header
+from app.core.security import get_empresa_id
 from database import get_db
 
 router = APIRouter()
@@ -30,12 +31,15 @@ def _estado_detraccion(fecha_limite: Optional[date]) -> dict:
         return {"semaforo": "verde", "estado": f"Vence en {dias} día(s)"}
 
 
-def _query_ventas_pendientes(db: Session, periodo_mes: Optional[int], periodo_anio: Optional[int]):
+def _query_ventas_pendientes(db: Session, periodo_mes: Optional[int], periodo_anio: Optional[int],
+                               empresa_id: Optional[int] = None):
     q = db.query(VentaComercial).filter(
         VentaComercial.tipo_documento == "Factura",
         VentaComercial.tiene_detraccion.is_(True),
         VentaComercial.detraccion_pagada.is_(False),
     )
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
     if periodo_mes:
         q = q.filter(extract("month", VentaComercial.fecha) == periodo_mes)
     if periodo_anio:
@@ -43,12 +47,15 @@ def _query_ventas_pendientes(db: Session, periodo_mes: Optional[int], periodo_an
     return q.all()
 
 
-def _query_gastos_pendientes(db: Session, periodo_mes: Optional[int], periodo_anio: Optional[int]):
+def _query_gastos_pendientes(db: Session, periodo_mes: Optional[int], periodo_anio: Optional[int],
+                              empresa_id: Optional[int] = None):
     q = db.query(Gasto).filter(
         Gasto.tipo_comprobante == "Factura",
         Gasto.tiene_detraccion.is_(True),
         Gasto.detraccion_depositada.is_(False),
     )
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
     if periodo_mes:
         q = q.filter(extract("month", Gasto.fecha) == periodo_mes)
     if periodo_anio:
@@ -61,10 +68,11 @@ def listar_pendientes(
     periodo_mes:  Optional[int] = None,
     periodo_anio: Optional[int] = None,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     filas = []
 
-    for v in _query_ventas_pendientes(db, periodo_mes, periodo_anio):
+    for v in _query_ventas_pendientes(db, periodo_mes, periodo_anio, empresa_id):
         filas.append({
             "id":               f"v{v.id}",
             "tipo":             "Venta",
@@ -80,7 +88,7 @@ def listar_pendientes(
             **_estado_detraccion(v.fecha_limite_detraccion),
         })
 
-    for g in _query_gastos_pendientes(db, periodo_mes, periodo_anio):
+    for g in _query_gastos_pendientes(db, periodo_mes, periodo_anio, empresa_id):
         filas.append({
             "id":               f"g{g.id}",
             "tipo":             "Compra",
@@ -101,12 +109,15 @@ def listar_pendientes(
 
 
 @router.get("/resumen-kpis")
-def resumen_kpis(db: Session = Depends(get_db)):
+def resumen_kpis(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     hoy       = date.today()
     en_3_dias = hoy + timedelta(days=3)
 
-    ventas = _query_ventas_pendientes(db, None, None)
-    gastos = _query_gastos_pendientes(db, None, None)
+    ventas = _query_ventas_pendientes(db, None, None, empresa_id)
+    gastos = _query_gastos_pendientes(db, None, None, empresa_id)
     todas  = list(ventas) + list(gastos)
 
     total_pendiente = sum(float(r.monto_detraccion or 0) for r in todas)
@@ -181,8 +192,11 @@ def _recalcular_importe_lote(lote: LoteDetraccion) -> None:
     )
 
 
-def _siguiente_numero_lote_carrito(db: Session) -> str:
-    lotes = db.query(LoteDetraccion.numero_lote).all()
+def _siguiente_numero_lote_carrito(db: Session, empresa_id: Optional[int] = None) -> str:
+    q = db.query(LoteDetraccion.numero_lote)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lotes = q.all()
     maximo = 0
     for (numero,) in lotes:
         try:
@@ -193,19 +207,29 @@ def _siguiente_numero_lote_carrito(db: Session) -> str:
 
 
 @router.get("/lotes")
-def listar_lotes(db: Session = Depends(get_db)):
-    lotes = db.query(LoteDetraccion).order_by(LoteDetraccion.numero_lote.desc()).all()
+def listar_lotes(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(LoteDetraccion)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lotes = q.order_by(LoteDetraccion.numero_lote.desc()).all()
     return [_serializar_lote(l) for l in lotes]
 
 
 @router.post("/lotes")
-def crear_lote(db: Session = Depends(get_db)):
+def crear_lote(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     lote = LoteDetraccion(
-        numero_lote=_siguiente_numero_lote_carrito(db),
+        numero_lote=_siguiente_numero_lote_carrito(db, empresa_id),
         fecha=date.today(),
         importe_total=0,
         estado="pendiente",
         created_at=date.today(),
+        empresa_id=empresa_id,
     )
     db.add(lote)
     db.commit()
@@ -214,8 +238,15 @@ def crear_lote(db: Session = Depends(get_db)):
 
 
 @router.get("/lotes/{lote_id}")
-def detalle_lote(lote_id: int, db: Session = Depends(get_db)):
-    lote = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id).first()
+def detalle_lote(
+    lote_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lote = q.first()
     if not lote:
         raise HTTPException(404, "Lote no encontrado")
 
@@ -225,7 +256,7 @@ def detalle_lote(lote_id: int, db: Session = Depends(get_db)):
 
     disponibles = [
         _serializar_gasto_lote(g)
-        for g in _query_gastos_pendientes(db, None, None)
+        for g in _query_gastos_pendientes(db, None, None, empresa_id)
         if g.id not in ids_en_lotes
     ]
     detalle = [_serializar_gasto_lote(d.gasto) for d in lote.detalles if d.gasto]
@@ -234,8 +265,16 @@ def detalle_lote(lote_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/lotes/{lote_id}/agregar-gastos")
-def agregar_gastos_lote(lote_id: int, body: AgregarGastosBody, db: Session = Depends(get_db)):
-    lote = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id).first()
+def agregar_gastos_lote(
+    lote_id: int,
+    body: AgregarGastosBody,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lote = q.first()
     if not lote:
         raise HTTPException(404, "Lote no encontrado")
 
@@ -248,7 +287,10 @@ def agregar_gastos_lote(lote_id: int, body: AgregarGastosBody, db: Session = Dep
     for gasto_id in body.gasto_ids:
         if gasto_id in ya_en_este_lote or gasto_id in ya_en_otro_lote:
             continue
-        gasto = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+        q_g = db.query(Gasto).filter(Gasto.id == gasto_id)
+        if empresa_id is not None:
+            q_g = q_g.filter(Gasto.empresa_id == empresa_id)
+        gasto = q_g.first()
         if not gasto:
             continue
         db.add(LoteDetraccionDetalle(lote_id=lote_id, gasto_id=gasto_id))
@@ -270,13 +312,21 @@ class PagarLoteBody(BaseModel):
 
 
 @router.put("/lotes/{lote_id}/marcar-pagado")
-def marcar_lote_pagado(lote_id: int, data: PagarLoteBody, db: Session = Depends(get_db)):
+def marcar_lote_pagado(
+    lote_id: int,
+    data: PagarLoteBody,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     """Pago consolidado del lote: UN solo registro (los campos de pago del
     propio LoteDetraccion), no un PagoGasto por factura. Marca
     detraccion_depositada=True en todas las facturas del lote de una sola
     vez y NO toca saldo_pendiente/estado_pago de cada Gasto — pagar la
     detracción es distinto de pagar la factura al proveedor."""
-    lote = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id).first()
+    q = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lote = q.first()
     if not lote:
         raise HTTPException(404, "Lote no encontrado")
     if lote.estado == "pagado":
@@ -299,11 +349,18 @@ def marcar_lote_pagado(lote_id: int, data: PagarLoteBody, db: Session = Depends(
 
 
 @router.delete("/lotes/{lote_id}/pago")
-def revertir_pago_lote(lote_id: int, db: Session = Depends(get_db)):
+def revertir_pago_lote(
+    lote_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     """Revierte el pago consolidado: el lote vuelve a 'pendiente' y sus
     facturas vuelven a aparecer como pendientes de depósito. No borra el
     lote ni sus facturas agrupadas, solo el estado de pago."""
-    lote = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id).first()
+    q = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lote = q.first()
     if not lote:
         raise HTTPException(404, "Lote no encontrado")
     if lote.estado != "pagado":
@@ -324,8 +381,16 @@ def revertir_pago_lote(lote_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/lotes/{lote_id}/gastos/{gasto_id}")
-def quitar_gasto_lote(lote_id: int, gasto_id: int, db: Session = Depends(get_db)):
-    lote = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id).first()
+def quitar_gasto_lote(
+    lote_id: int,
+    gasto_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lote = q.first()
     if not lote:
         raise HTTPException(404, "Lote no encontrado")
 
@@ -531,6 +596,7 @@ def _siguiente_numero_lote(db: Session) -> int:
 def generar_txt(
     ids: str = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     if not ids:
         raise HTTPException(400, "Debe seleccionar al menos una detracción")
@@ -554,7 +620,10 @@ def generar_txt(
             "detracciones de Ventas no generan este archivo.",
         )
 
-    gastos = db.query(Gasto).filter(Gasto.id.in_(ids_gasto)).order_by(Gasto.fecha.asc()).all()
+    q = db.query(Gasto).filter(Gasto.id.in_(ids_gasto))
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    gastos = q.order_by(Gasto.fecha.asc()).all()
     if not gastos:
         raise HTTPException(404, "No se encontraron detracciones para los IDs indicados")
 
@@ -610,10 +679,17 @@ def generar_txt(
 
 
 @router.get("/lotes/{lote_id}/generar-txt")
-def generar_txt_lote(lote_id: int, db: Session = Depends(get_db)):
+def generar_txt_lote(
+    lote_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     """Igual formato que /generar-txt, pero acotado a los Gastos de un lote
     puntual y usando el N° de lote que el usuario ya asignó al crearlo."""
-    lote = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id).first()
+    q = db.query(LoteDetraccion).filter(LoteDetraccion.id == lote_id)
+    if empresa_id is not None:
+        q = q.filter(LoteDetraccion.empresa_id == empresa_id)
+    lote = q.first()
     if not lote:
         raise HTTPException(404, "Lote no encontrado")
 
@@ -662,8 +738,15 @@ def generar_txt_lote(lote_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/ventas/{venta_id}/marcar-pagada")
-def marcar_venta_pagada(venta_id: int, db: Session = Depends(get_db)):
-    v = db.query(VentaComercial).filter(VentaComercial.id == venta_id).first()
+def marcar_venta_pagada(
+    venta_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(VentaComercial).filter(VentaComercial.id == venta_id)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    v = q.first()
     if not v:
         raise HTTPException(404, "Comprobante no encontrado")
     v.detraccion_pagada = True
@@ -672,8 +755,15 @@ def marcar_venta_pagada(venta_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/gastos/{gasto_id}/marcar-depositada")
-def marcar_gasto_depositada(gasto_id: int, db: Session = Depends(get_db)):
-    g = db.query(Gasto).filter(Gasto.id == gasto_id).first()
+def marcar_gasto_depositada(
+    gasto_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(Gasto).filter(Gasto.id == gasto_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    g = q.first()
     if not g:
         raise HTTPException(404, "Gasto no encontrado")
     g.detraccion_depositada = True

@@ -5,7 +5,7 @@ from sqlalchemy import or_
 from database import get_db
 from app.models.comercial import VentaComercial, PagoCobranza, OrdenCobro, OrdenCobroDetalle, CuentaBancaria
 from app.models.models import Cliente, Usuario, MovimientoCaja, Garantia
-from app.core.security import get_current_usuario
+from app.core.security import get_current_usuario, get_empresa_id
 from app.routers.garantias import revertir_cobro_garantia
 from app.services.conciliacion_service import limpiar_movimiento_sistema_por_pago
 from app.services.auditoria_service import registrar_log, ip_de
@@ -93,6 +93,7 @@ def listar_cobranza(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(VentaComercial, Cliente).outerjoin(
         Cliente, VentaComercial.cliente_id == Cliente.id
@@ -100,6 +101,9 @@ def listar_cobranza(
         VentaComercial.tipo_documento.in_(TIPOS_COBRANZA),
         VentaComercial.estado != "Anulada",
     )
+
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
 
     if search:
         like = f"%{search}%"
@@ -154,12 +158,18 @@ def listar_cobranza(
 
 
 @router.get("/resumen")
-def resumen_cobranza(db: Session = Depends(get_db)):
-    all_rows = db.query(VentaComercial, Cliente).outerjoin(
+def resumen_cobranza(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(VentaComercial, Cliente).outerjoin(
         Cliente, VentaComercial.cliente_id == Cliente.id
     ).filter(
         VentaComercial.tipo_documento.in_(TIPOS_COBRANZA),
-    ).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    all_rows = q.all()
 
     total_pendiente = 0.0
     al_dia          = 0.0
@@ -205,15 +215,21 @@ def resumen_cobranza(db: Session = Depends(get_db)):
 
 
 @router.get("/morosidad-por-cliente")
-def morosidad_por_cliente(db: Session = Depends(get_db)):
+def morosidad_por_cliente(
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     hoy = date.today()
-    all_rows = db.query(VentaComercial, Cliente).outerjoin(
+    q = db.query(VentaComercial, Cliente).outerjoin(
         Cliente, VentaComercial.cliente_id == Cliente.id
     ).filter(
         VentaComercial.tipo_documento.in_(TIPOS_COBRANZA),
         VentaComercial.estado_cobranza != "Pagada",
         VentaComercial.estado != "Anulada",
-    ).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    all_rows = q.all()
 
     clientes: dict = {}
     sem_order = {"verde": 0, "amarillo": 1, "rojo": 2}
@@ -260,13 +276,16 @@ def morosidad_por_cliente(db: Session = Depends(get_db)):
 # _semaforo() de arriba (verde/amarillo/rojo usado en Cuentas por Cobrar y en
 # morosidad-por-cliente) — no se toca ese cálculo existente.
 
-def _morosidad_detalle(db: Session, ruc_cliente: str) -> dict:
-    facturas = db.query(VentaComercial).filter(
+def _morosidad_detalle(db: Session, ruc_cliente: str, empresa_id: Optional[int] = None) -> dict:
+    q = db.query(VentaComercial).filter(
         VentaComercial.ruc_cliente == ruc_cliente,
         VentaComercial.saldo_pendiente > 0,
         VentaComercial.estado != "Anulada",
         VentaComercial.tipo_documento.in_(TIPOS_COBRANZA),
-    ).order_by(VentaComercial.fecha_vencimiento).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    facturas = q.order_by(VentaComercial.fecha_vencimiento).all()
 
     hoy = date.today()
     detalle = []
@@ -305,17 +324,26 @@ def _morosidad_detalle(db: Session, ruc_cliente: str) -> dict:
 
 
 @router.get("/morosidad/{ruc_cliente}")
-def morosidad_detalle_cliente(ruc_cliente: str, db: Session = Depends(get_db)):
-    return _morosidad_detalle(db, ruc_cliente)
+def morosidad_detalle_cliente(
+    ruc_cliente: str,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    return _morosidad_detalle(db, ruc_cliente, empresa_id)
 
 
 @router.post("/morosidad/{ruc_cliente}/recordatorio")
-def enviar_recordatorio_morosidad(ruc_cliente: str, http_request: Request, db: Session = Depends(get_db),
-                                   usuario: Usuario = Depends(get_current_usuario)):
+def enviar_recordatorio_morosidad(
+    ruc_cliente: str,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     if not email_configurado():
         raise HTTPException(400, "Configure el email en el archivo .env para poder enviar correos")
 
-    detalle = _morosidad_detalle(db, ruc_cliente)
+    detalle = _morosidad_detalle(db, ruc_cliente, empresa_id)
     if not detalle["facturas"]:
         raise HTTPException(404, "No se encontraron facturas vencidas para este cliente")
 
@@ -371,12 +399,15 @@ def listar_pagos_cobranza(
     cliente:     str            = "",
     metodo_pago: str            = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     resultado = []
 
     q1 = db.query(PagoCobranza, VentaComercial, Cliente).join(
         VentaComercial, PagoCobranza.comprobante_id == VentaComercial.id
     ).outerjoin(Cliente, VentaComercial.cliente_id == Cliente.id)
+    if empresa_id is not None:
+        q1 = q1.filter(VentaComercial.empresa_id == empresa_id)
     if desde: q1 = q1.filter(PagoCobranza.fecha_pago >= desde)
     if hasta: q1 = q1.filter(PagoCobranza.fecha_pago <= hasta)
     if metodo_pago: q1 = q1.filter(PagoCobranza.metodo_pago == metodo_pago)
@@ -413,6 +444,8 @@ def listar_pagos_cobranza(
     q2 = db.query(OrdenCobroDetalle, OrdenCobro, VentaComercial).join(
         OrdenCobro, OrdenCobroDetalle.orden_id == OrdenCobro.id
     ).outerjoin(VentaComercial, OrdenCobroDetalle.venta_id == VentaComercial.id)
+    if empresa_id is not None:
+        q2 = q2.filter(OrdenCobro.empresa_id == empresa_id)
     if desde: q2 = q2.filter(OrdenCobro.fecha_cobro >= desde)
     if hasta: q2 = q2.filter(OrdenCobro.fecha_cobro <= hasta)
     if metodo_pago: q2 = q2.filter(OrdenCobro.metodo_cobro == metodo_pago)
@@ -452,6 +485,8 @@ def listar_pagos_cobranza(
     q3 = db.query(Garantia, CuentaBancaria).outerjoin(
         CuentaBancaria, Garantia.cuenta_bancaria_id == CuentaBancaria.id
     )
+    if empresa_id is not None:
+        q3 = q3.filter(Garantia.empresa_id == empresa_id)
     if desde: q3 = q3.filter(Garantia.fecha_cobro >= desde)
     if hasta: q3 = q3.filter(Garantia.fecha_cobro <= hasta)
     if metodo_pago: q3 = q3.filter(Garantia.metodo_cobro == metodo_pago)
@@ -523,9 +558,18 @@ class PagoUpdate(BaseModel):
 
 
 @router.post("/{comprobante_id}/pago")
-def registrar_pago(comprobante_id: int, data: PagoCreate, http_request: Request, db: Session = Depends(get_db),
-                    usuario: Usuario = Depends(get_current_usuario)):
-    vc = db.query(VentaComercial).filter(VentaComercial.id == comprobante_id).first()
+def registrar_pago(
+    comprobante_id: int,
+    data: PagoCreate,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(VentaComercial).filter(VentaComercial.id == comprobante_id)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    vc = q.first()
     if not vc:
         raise HTTPException(404, "Comprobante no encontrado")
     if (vc.tipo_documento or "") not in TIPOS_COBRANZA:
@@ -607,6 +651,7 @@ def exportar_cobranza(
     hasta:      Optional[date] = None,
     cliente_id: Optional[int]  = None,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     try:
         from openpyxl import Workbook
@@ -618,6 +663,8 @@ def exportar_cobranza(
         Cliente, VentaComercial.cliente_id == Cliente.id
     ).filter(VentaComercial.tipo_documento.in_(TIPOS_COBRANZA))
 
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
     if desde:
         q = q.filter(VentaComercial.fecha >= desde)
     if hasta:
@@ -704,12 +751,20 @@ def exportar_cobranza(
 
 
 @router.put("/pagos/{pago_id}")
-def editar_pago(pago_id: int, data: PagoUpdate, db: Session = Depends(get_db),
-                 usuario: Usuario = Depends(get_current_usuario)):
+def editar_pago(
+    pago_id: int,
+    data: PagoUpdate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     pago = db.query(PagoCobranza).filter(PagoCobranza.id == pago_id).first()
     if not pago:
         raise HTTPException(404, "Pago no encontrado")
-    vc = db.query(VentaComercial).filter(VentaComercial.id == pago.comprobante_id).first()
+    q_vc = db.query(VentaComercial).filter(VentaComercial.id == pago.comprobante_id)
+    if empresa_id is not None:
+        q_vc = q_vc.filter(VentaComercial.empresa_id == empresa_id)
+    vc = q_vc.first()
     if not vc:
         raise HTTPException(404, "Comprobante no encontrado")
     if data.monto_pagado <= 0:
@@ -736,11 +791,18 @@ def editar_pago(pago_id: int, data: PagoUpdate, db: Session = Depends(get_db),
 
 
 @router.delete("/pagos/{pago_id}")
-def eliminar_pago(pago_id: int, db: Session = Depends(get_db)):
+def eliminar_pago(
+    pago_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     pago = db.query(PagoCobranza).filter(PagoCobranza.id == pago_id).first()
     if not pago:
         raise HTTPException(404, "Pago no encontrado")
-    vc = db.query(VentaComercial).filter(VentaComercial.id == pago.comprobante_id).first()
+    q_vc = db.query(VentaComercial).filter(VentaComercial.id == pago.comprobante_id)
+    if empresa_id is not None:
+        q_vc = q_vc.filter(VentaComercial.empresa_id == empresa_id)
+    vc = q_vc.first()
     if not vc:
         raise HTTPException(404, "Comprobante no encontrado")
 
@@ -771,8 +833,14 @@ class ExtornarRequest(BaseModel):
 
 
 @router.put("/pagos/{pago_id}/extornar")
-def extornar_pago(pago_id: int, data: ExtornarRequest, http_request: Request,
-                   db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
+def extornar_pago(
+    pago_id: int,
+    data: ExtornarRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
     pago = db.query(PagoCobranza).filter(PagoCobranza.id == pago_id).first()
     if not pago:
         raise HTTPException(404, "Pago no encontrado")
@@ -781,7 +849,10 @@ def extornar_pago(pago_id: int, data: ExtornarRequest, http_request: Request,
     if not data.motivo or not data.motivo.strip():
         raise HTTPException(400, "El motivo del extorno es obligatorio")
 
-    vc = db.query(VentaComercial).filter(VentaComercial.id == pago.comprobante_id).first()
+    q_vc = db.query(VentaComercial).filter(VentaComercial.id == pago.comprobante_id)
+    if empresa_id is not None:
+        q_vc = q_vc.filter(VentaComercial.empresa_id == empresa_id)
+    vc = q_vc.first()
     if not vc:
         raise HTTPException(404, "Comprobante no encontrado")
 
@@ -842,8 +913,15 @@ def extornar_pago(pago_id: int, data: ExtornarRequest, http_request: Request,
 
 
 @router.get("/{comprobante_id}/historial-pagos")
-def historial_pagos(comprobante_id: int, db: Session = Depends(get_db)):
-    vc = db.query(VentaComercial).filter(VentaComercial.id == comprobante_id).first()
+def historial_pagos(
+    comprobante_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(VentaComercial).filter(VentaComercial.id == comprobante_id)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    vc = q.first()
     if not vc:
         raise HTTPException(404, "Comprobante no encontrado")
 

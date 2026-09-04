@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import OrdenServicio, Cliente, Gasto
 from app.models.comercial import VentaComercial
+from app.core.security import get_empresa_id
 from database import get_db
 
 router = APIRouter()
@@ -25,10 +26,13 @@ MONTO_GASTO = func.coalesce(Gasto.monto_soles, Gasto.monto, 0)
 
 # ── Correlativo ──────────────────────────────────────────────────────────────
 
-def _proximo_os(db: Session) -> str:
-    rows = db.query(OrdenServicio.numero_orden).filter(
+def _proximo_os(db: Session, empresa_id: Optional[int] = None) -> str:
+    q = db.query(OrdenServicio.numero_orden).filter(
         OrdenServicio.numero_orden.isnot(None)
-    ).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(OrdenServicio.empresa_id == empresa_id)
+    rows = q.all()
     max_num = 0
     for (no,) in rows:
         if no and no.upper().startswith("OS-"):
@@ -109,8 +113,11 @@ def _serialize(o: OrdenServicio, cli: Optional[Cliente] = None) -> dict:
     }
 
 
-def _costo_real(db: Session, orden_id: int) -> float:
-    total = db.query(func.coalesce(func.sum(MONTO_GASTO), 0)).filter(Gasto.orden_id == orden_id).scalar()
+def _costo_real(db: Session, orden_id: int, empresa_id: Optional[int] = None) -> float:
+    q = db.query(func.coalesce(func.sum(MONTO_GASTO), 0)).filter(Gasto.orden_id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(Gasto.empresa_id == empresa_id)
+    total = q.scalar()
     return round(float(total or 0), 2)
 
 
@@ -135,8 +142,11 @@ def listar(
     page:          int = 1,
     per_page:      int = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(OrdenServicio, Cliente).outerjoin(Cliente, OrdenServicio.cliente_id == Cliente.id)
+    if empresa_id is not None:
+        q = q.filter(OrdenServicio.empresa_id == empresa_id)
     if search:
         like = f"%{search}%"
         q = q.filter(or_(
@@ -164,16 +174,24 @@ def listar(
 # ── Crear ────────────────────────────────────────────────────────────────────
 
 @router.post("")
-def crear(data: OrdenCreate, db: Session = Depends(get_db)):
+def crear(data: OrdenCreate, db: Session = Depends(get_db),
+          empresa_id: Optional[int] = Depends(get_empresa_id)):
     if data.estado not in ESTADOS:
         raise HTTPException(400, f"Estado inválido. Use uno de: {', '.join(ESTADOS)}")
 
-    numero = data.numero_orden or _proximo_os(db)
-    if db.query(OrdenServicio).filter(OrdenServicio.numero_orden == numero).first():
+    numero = data.numero_orden or _proximo_os(db, empresa_id)
+    q_dup = db.query(OrdenServicio).filter(OrdenServicio.numero_orden == numero)
+    if empresa_id is not None:
+        q_dup = q_dup.filter(OrdenServicio.empresa_id == empresa_id)
+    if q_dup.first():
         raise HTTPException(400, f"Ya existe una orden con el número {numero}")
 
-    if data.comprobante_id and not db.query(VentaComercial).filter(VentaComercial.id == data.comprobante_id).first():
-        raise HTTPException(400, "El comprobante vinculado no existe")
+    if data.comprobante_id:
+        q_comp = db.query(VentaComercial).filter(VentaComercial.id == data.comprobante_id)
+        if empresa_id is not None:
+            q_comp = q_comp.filter(VentaComercial.empresa_id == empresa_id)
+        if not q_comp.first():
+            raise HTTPException(400, "El comprobante vinculado no existe")
 
     presupuesto_r = round(data.presupuesto, 2)
     moneda        = data.moneda or "PEN"
@@ -200,6 +218,7 @@ def crear(data: OrdenCreate, db: Session = Depends(get_db)):
         observaciones      = data.observaciones,
         created_at         = date.today(),
         updated_at         = date.today(),
+        empresa_id         = empresa_id,
     )
     db.add(orden)
     db.commit()
@@ -211,7 +230,8 @@ def crear(data: OrdenCreate, db: Session = Depends(get_db)):
 # ── KPIs ─────────────────────────────────────────────────────────────────────
 
 @router.get("/resumen-kpis")
-def resumen_kpis(db: Session = Depends(get_db)):
+def resumen_kpis(db: Session = Depends(get_db),
+                 empresa_id: Optional[int] = Depends(get_empresa_id)):
     hoy = date.today()
     primero_mes, ultimo_mes = _primero_ultimo_mes(hoy)
 
@@ -220,17 +240,24 @@ def resumen_kpis(db: Session = Depends(get_db)):
         monto = sum(float(o.presupuesto_soles or o.presupuesto or 0) for o in q.all())
         return cant, round(monto, 2)
 
-    pend_cant, pend_monto = _agg(db.query(OrdenServicio).filter(OrdenServicio.estado == "Pendiente"))
-    proc_cant, proc_monto = _agg(db.query(OrdenServicio).filter(OrdenServicio.estado == "En Proceso"))
-    comp_cant, comp_monto = _agg(
-        db.query(OrdenServicio).filter(
-            OrdenServicio.estado == "Completada",
-            OrdenServicio.fecha_fin_real.isnot(None),
-            OrdenServicio.fecha_fin_real >= primero_mes,
-            OrdenServicio.fecha_fin_real <= ultimo_mes,
-        )
-    )
-    canc_cant = db.query(OrdenServicio).filter(OrdenServicio.estado == "Cancelada").count()
+    def _q_os(extra_filters=None):
+        q = db.query(OrdenServicio)
+        if empresa_id is not None:
+            q = q.filter(OrdenServicio.empresa_id == empresa_id)
+        if extra_filters:
+            for f in extra_filters:
+                q = q.filter(f)
+        return q
+
+    pend_cant, pend_monto = _agg(_q_os([OrdenServicio.estado == "Pendiente"]))
+    proc_cant, proc_monto = _agg(_q_os([OrdenServicio.estado == "En Proceso"]))
+    comp_cant, comp_monto = _agg(_q_os([
+        OrdenServicio.estado == "Completada",
+        OrdenServicio.fecha_fin_real.isnot(None),
+        OrdenServicio.fecha_fin_real >= primero_mes,
+        OrdenServicio.fecha_fin_real <= ultimo_mes,
+    ]))
+    canc_cant = _q_os([OrdenServicio.estado == "Cancelada"]).count()
 
     return {
         "pendientes":            {"cantidad": pend_cant, "monto": pend_monto},
@@ -247,6 +274,7 @@ def calendario(
     mes: int = Query(..., ge=1, le=12),
     anio: int = Query(..., alias="año"),
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     primero = date(anio, mes, 1)
     if mes == 12:
@@ -255,21 +283,25 @@ def calendario(
         ultimo = date(anio, mes + 1, 1) - timedelta(days=1)
 
     # Órdenes cuyo rango [fecha_inicio, fecha_fin_estimada] se solapa con el mes.
-    rows = db.query(OrdenServicio, Cliente).outerjoin(
+    q = db.query(OrdenServicio, Cliente).outerjoin(
         Cliente, OrdenServicio.cliente_id == Cliente.id
     ).filter(
         OrdenServicio.fecha_inicio <= ultimo,
         or_(OrdenServicio.fecha_fin_estimada >= primero, OrdenServicio.fecha_fin_estimada.is_(None)),
-    ).all()
+    )
+    if empresa_id is not None:
+        q = q.filter(OrdenServicio.empresa_id == empresa_id)
 
+    rows = q.all()
     return {"data": [_serialize(o, cli) for o, cli in rows]}
 
 
 # ── Próximo correlativo ──────────────────────────────────────────────────────
 
 @router.get("/proximo-correlativo")
-def proximo_correlativo(db: Session = Depends(get_db)):
-    return {"proximo": _proximo_os(db)}
+def proximo_correlativo(db: Session = Depends(get_db),
+                        empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return {"proximo": _proximo_os(db, empresa_id)}
 
 
 # ── Exportar Excel ───────────────────────────────────────────────────────────
@@ -281,11 +313,14 @@ def exportar(
     tipo_servicio: str = "",
     estado:        str = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
 
     q = db.query(OrdenServicio, Cliente).outerjoin(Cliente, OrdenServicio.cliente_id == Cliente.id)
+    if empresa_id is not None:
+        q = q.filter(OrdenServicio.empresa_id == empresa_id)
     if fecha_desde:   q = q.filter(OrdenServicio.fecha_inicio >= fecha_desde)
     if fecha_hasta:   q = q.filter(OrdenServicio.fecha_inicio <= fecha_hasta)
     if tipo_servicio: q = q.filter(OrdenServicio.tipo_servicio == tipo_servicio)
@@ -318,11 +353,14 @@ def exportar(
     comp_ids = {o.comprobante_id for o, _ in rows if o.comprobante_id}
     comps = {}
     if comp_ids:
-        for vc in db.query(VentaComercial).filter(VentaComercial.id.in_(comp_ids)).all():
+        q_comps = db.query(VentaComercial).filter(VentaComercial.id.in_(comp_ids))
+        if empresa_id is not None:
+            q_comps = q_comps.filter(VentaComercial.empresa_id == empresa_id)
+        for vc in q_comps.all():
             comps[vc.id] = vc.numero_factura
 
     for ri, (o, cli) in enumerate(rows, 2):
-        costo_real = _costo_real(db, o.id)
+        costo_real = _costo_real(db, o.id, empresa_id)
         presupuesto_soles = round(float(o.presupuesto_soles or o.presupuesto or 0), 2)
         variacion = round(presupuesto_soles - costo_real, 2)
         ws.append([
@@ -363,23 +401,30 @@ def exportar(
 # ── Detalle ──────────────────────────────────────────────────────────────────
 
 @router.get("/{orden_id}")
-def obtener(orden_id: int, db: Session = Depends(get_db)):
-    row = db.query(OrdenServicio, Cliente).outerjoin(
+def obtener(orden_id: int, db: Session = Depends(get_db),
+            empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(OrdenServicio, Cliente).outerjoin(
         Cliente, OrdenServicio.cliente_id == Cliente.id
-    ).filter(OrdenServicio.id == orden_id).first()
+    ).filter(OrdenServicio.id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(OrdenServicio.empresa_id == empresa_id)
+    row = q.first()
     if not row:
         raise HTTPException(404, "Orden de servicio no encontrada")
     o, cli = row
     result = _serialize(o, cli)
 
-    costo_real = _costo_real(db, orden_id)
+    costo_real = _costo_real(db, orden_id, empresa_id)
     presupuesto_soles = result["presupuesto_soles"]
     result["costo_real"] = costo_real
     result["variacion"]  = round(presupuesto_soles - costo_real, 2)
 
     result["comprobante"] = None
     if o.comprobante_id:
-        vc = db.query(VentaComercial).filter(VentaComercial.id == o.comprobante_id).first()
+        q_vc = db.query(VentaComercial).filter(VentaComercial.id == o.comprobante_id)
+        if empresa_id is not None:
+            q_vc = q_vc.filter(VentaComercial.empresa_id == empresa_id)
+        vc = q_vc.first()
         if vc:
             result["comprobante"] = {
                 "id":               vc.id,
@@ -392,10 +437,19 @@ def obtener(orden_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{orden_id}/gastos")
-def gastos_de_orden(orden_id: int, db: Session = Depends(get_db)):
-    if not db.query(OrdenServicio).filter(OrdenServicio.id == orden_id).first():
+def gastos_de_orden(orden_id: int, db: Session = Depends(get_db),
+                    empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q_os = db.query(OrdenServicio).filter(OrdenServicio.id == orden_id)
+    if empresa_id is not None:
+        q_os = q_os.filter(OrdenServicio.empresa_id == empresa_id)
+    if not q_os.first():
         raise HTTPException(404, "Orden de servicio no encontrada")
-    gastos = db.query(Gasto).filter(Gasto.orden_id == orden_id).order_by(Gasto.fecha.desc()).all()
+
+    q_gastos = db.query(Gasto).filter(Gasto.orden_id == orden_id)
+    if empresa_id is not None:
+        q_gastos = q_gastos.filter(Gasto.empresa_id == empresa_id)
+    gastos = q_gastos.order_by(Gasto.fecha.desc()).all()
+
     data = [{
         "id":                 g.id,
         "fecha":              str(g.fecha),
@@ -412,15 +466,23 @@ def gastos_de_orden(orden_id: int, db: Session = Depends(get_db)):
 # ── Actualizar ───────────────────────────────────────────────────────────────
 
 @router.put("/{orden_id}")
-def actualizar(orden_id: int, data: OrdenUpdate, db: Session = Depends(get_db)):
-    orden = db.query(OrdenServicio).filter(OrdenServicio.id == orden_id).first()
+def actualizar(orden_id: int, data: OrdenUpdate, db: Session = Depends(get_db),
+               empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(OrdenServicio).filter(OrdenServicio.id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(OrdenServicio.empresa_id == empresa_id)
+    orden = q.first()
     if not orden:
         raise HTTPException(404, "Orden de servicio no encontrada")
 
     if data.estado is not None and data.estado not in ESTADOS:
         raise HTTPException(400, f"Estado inválido. Use uno de: {', '.join(ESTADOS)}")
-    if data.comprobante_id and not db.query(VentaComercial).filter(VentaComercial.id == data.comprobante_id).first():
-        raise HTTPException(400, "El comprobante vinculado no existe")
+    if data.comprobante_id:
+        q_vc = db.query(VentaComercial).filter(VentaComercial.id == data.comprobante_id)
+        if empresa_id is not None:
+            q_vc = q_vc.filter(VentaComercial.empresa_id == empresa_id)
+        if not q_vc.first():
+            raise HTTPException(400, "El comprobante vinculado no existe")
 
     fields = data.model_dump(exclude_unset=True)
 
@@ -448,11 +510,20 @@ def actualizar(orden_id: int, data: OrdenUpdate, db: Session = Depends(get_db)):
 
 
 @router.delete("/{orden_id}")
-def eliminar(orden_id: int, db: Session = Depends(get_db)):
-    orden = db.query(OrdenServicio).filter(OrdenServicio.id == orden_id).first()
+def eliminar(orden_id: int, db: Session = Depends(get_db),
+             empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(OrdenServicio).filter(OrdenServicio.id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(OrdenServicio.empresa_id == empresa_id)
+    orden = q.first()
     if not orden:
         raise HTTPException(404, "Orden de servicio no encontrada")
-    db.query(Gasto).filter(Gasto.orden_id == orden_id).update({Gasto.orden_id: None})
+
+    q_gastos = db.query(Gasto).filter(Gasto.orden_id == orden_id)
+    if empresa_id is not None:
+        q_gastos = q_gastos.filter(Gasto.empresa_id == empresa_id)
+    q_gastos.update({Gasto.orden_id: None})
+
     db.delete(orden)
     db.commit()
     return {"mensaje": "Orden de servicio eliminada"}

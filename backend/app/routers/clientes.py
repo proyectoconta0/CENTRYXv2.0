@@ -9,7 +9,7 @@ from app.services import clientes_service as svc
 from app.schemas.comercial_schemas import ClienteCreate, ClienteUpdate
 from app.models.comercial import DocumentoCliente, VentaComercial, PagoCobranza
 from app.models.models import Usuario, Cliente
-from app.core.security import get_current_usuario
+from app.core.security import get_current_usuario, get_empresa_id
 from app.services.auditoria_service import registrar_log, ip_de
 from app.services.empresa_header import get_empresa_header
 from app.services.reportes_export import construir_pdf_estado_cuenta
@@ -24,28 +24,37 @@ UPLOAD_BASE = Path("uploads/clientes")
 TIPOS_COBRANZA = ["Factura", "Boleta de Venta"]
 
 
-def _generar_pdf_estado_cuenta(db: Session, cliente_id: int, d: date, h: date):
+def _generar_pdf_estado_cuenta(db: Session, cliente_id: int, d: date, h: date,
+                                empresa_id: Optional[int] = None):
     """Reconstruye el PDF de Estado de Cuenta para el rango [d, h]. Usado tanto
     por el endpoint de descarga como por el de envío por correo."""
-    cliente = db.query(Cliente).filter(Cliente.id == cliente_id).first()
+    q_cli = db.query(Cliente).filter(Cliente.id == cliente_id)
+    if empresa_id is not None:
+        q_cli = q_cli.filter(Cliente.empresa_id == empresa_id)
+    cliente = q_cli.first()
     if not cliente:
         raise HTTPException(404, "Cliente no encontrado")
 
-    ventas = db.query(VentaComercial).filter(
+    q_ventas = db.query(VentaComercial).filter(
         VentaComercial.cliente_id == cliente_id,
         VentaComercial.tipo_documento.in_(TIPOS_COBRANZA),
         VentaComercial.fecha >= d, VentaComercial.fecha <= h,
-    ).all()
+    )
+    if empresa_id is not None:
+        q_ventas = q_ventas.filter(VentaComercial.empresa_id == empresa_id)
+    ventas = q_ventas.all()
 
-    pagos = (
+    q_pagos = (
         db.query(PagoCobranza)
         .join(VentaComercial, PagoCobranza.comprobante_id == VentaComercial.id)
         .filter(
             VentaComercial.cliente_id == cliente_id,
             PagoCobranza.fecha_pago >= d, PagoCobranza.fecha_pago <= h,
         )
-        .all()
     )
+    if empresa_id is not None:
+        q_pagos = q_pagos.filter(VentaComercial.empresa_id == empresa_id)
+    pagos = q_pagos.all()
 
     movimientos_raw = []
     for v in ventas:
@@ -100,12 +109,14 @@ def _generar_pdf_estado_cuenta(db: Session, cliente_id: int, d: date, h: date):
 
 @router.get("")
 def listar(search: str = "", estado: str = "todos", page: int = 1,
-           per_page: int = 10, db: Session = Depends(get_db)):
-    return svc.list_clientes(db, search, estado, page, per_page)
+           per_page: int = 10, db: Session = Depends(get_db),
+           empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return svc.list_clientes(db, search, estado, page, per_page, empresa_id)
 
 
 @router.get("/buscar")
-def buscar_clientes(q: str = "", db: Session = Depends(get_db)):
+def buscar_clientes(q: str = "", db: Session = Depends(get_db),
+                    empresa_id: Optional[int] = Depends(get_empresa_id)):
     """Autocompletado liviano por RUC o razón social — usado por selectores
     tipo búsqueda (ej. modal Nueva Garantía), a diferencia de GET "" que
     devuelve la lista paginada completa con datos agregados."""
@@ -115,14 +126,18 @@ def buscar_clientes(q: str = "", db: Session = Depends(get_db)):
     like = f"%{q}%"
     rows = db.query(Cliente).filter(
         or_(Cliente.ruc.ilike(like), Cliente.razon_social.ilike(like))
-    ).order_by(Cliente.razon_social.asc()).limit(20).all()
+    )
+    if empresa_id is not None:
+        rows = rows.filter(Cliente.empresa_id == empresa_id)
+    rows = rows.order_by(Cliente.razon_social.asc()).limit(20).all()
     return [{"id": c.id, "ruc": c.ruc, "razon_social": c.razon_social} for c in rows]
 
 
 @router.post("")
 def crear(data: ClienteCreate, http_request: Request, db: Session = Depends(get_db),
-          usuario: Usuario = Depends(get_current_usuario)):
-    resultado = svc.create_cliente(db, data, usuario.nombre)
+          usuario: Usuario = Depends(get_current_usuario),
+          empresa_id: Optional[int] = Depends(get_empresa_id)):
+    resultado = svc.create_cliente(db, data, usuario.nombre, empresa_id)
     registrar_log(
         db, usuario.id, usuario.nombre, "clientes", "Creó cliente",
         f"Creó cliente {resultado['razon_social']}", ip_de(http_request),
@@ -131,14 +146,17 @@ def crear(data: ClienteCreate, http_request: Request, db: Session = Depends(get_
 
 
 @router.get("/{cliente_id}")
-def obtener(cliente_id: int, db: Session = Depends(get_db)):
-    return svc.get_cliente(db, cliente_id)
+def obtener(cliente_id: int, db: Session = Depends(get_db),
+            empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return svc.get_cliente(db, cliente_id, empresa_id)
 
 
 @router.put("/{cliente_id}")
-def actualizar(cliente_id: int, data: ClienteUpdate, http_request: Request, db: Session = Depends(get_db),
-               usuario: Usuario = Depends(get_current_usuario)):
-    resultado = svc.update_cliente(db, cliente_id, data, usuario.nombre)
+def actualizar(cliente_id: int, data: ClienteUpdate, http_request: Request,
+               db: Session = Depends(get_db),
+               usuario: Usuario = Depends(get_current_usuario),
+               empresa_id: Optional[int] = Depends(get_empresa_id)):
+    resultado = svc.update_cliente(db, cliente_id, data, usuario.nombre, empresa_id)
     registrar_log(
         db, usuario.id, usuario.nombre, "clientes", "Editó cliente",
         f"Editó cliente {resultado['razon_social']}", ip_de(http_request),
@@ -148,9 +166,10 @@ def actualizar(cliente_id: int, data: ClienteUpdate, http_request: Request, db: 
 
 @router.delete("/{cliente_id}")
 def eliminar(cliente_id: int, http_request: Request, db: Session = Depends(get_db),
-             usuario: Usuario = Depends(get_current_usuario)):
-    cliente = svc.get_cliente(db, cliente_id)
-    resultado = svc.delete_cliente(db, cliente_id)
+             usuario: Usuario = Depends(get_current_usuario),
+             empresa_id: Optional[int] = Depends(get_empresa_id)):
+    cliente = svc.get_cliente(db, cliente_id, empresa_id)
+    resultado = svc.delete_cliente(db, cliente_id, empresa_id)
     registrar_log(
         db, usuario.id, usuario.nombre, "clientes", "Eliminó cliente",
         f"Eliminó cliente {cliente.get('razon_social', '')}", ip_de(http_request),
@@ -159,18 +178,22 @@ def eliminar(cliente_id: int, http_request: Request, db: Session = Depends(get_d
 
 
 @router.get("/{cliente_id}/historial")
-def historial(cliente_id: int, db: Session = Depends(get_db)):
-    return svc.get_historial(db, cliente_id)
+def historial(cliente_id: int, db: Session = Depends(get_db),
+              empresa_id: Optional[int] = Depends(get_empresa_id)):
+    return svc.get_historial(db, cliente_id, empresa_id)
 
 
 @router.get("/{cliente_id}/estado-cuenta")
 def estado_cuenta(cliente_id: int, desde: Optional[date] = None, hasta: Optional[date] = None,
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_db),
+                   empresa_id: Optional[int] = Depends(get_empresa_id)):
     hoy = date.today()
     d = desde or hoy.replace(day=1)
     h = hasta or hoy
 
-    cliente, pdf_bytes, _resumen, _periodo_label, _empresa = _generar_pdf_estado_cuenta(db, cliente_id, d, h)
+    cliente, pdf_bytes, _resumen, _periodo_label, _empresa = _generar_pdf_estado_cuenta(
+        db, cliente_id, d, h, empresa_id
+    )
 
     nombre_archivo = f"EstadoCuenta_{cliente.razon_social.replace(' ', '_')}_{hoy.strftime('%Y%m%d')}.pdf"
     return StreamingResponse(
@@ -182,14 +205,17 @@ def estado_cuenta(cliente_id: int, desde: Optional[date] = None, hasta: Optional
 
 @router.get("/{cliente_id}/estado-cuenta/resumen")
 def estado_cuenta_resumen(cliente_id: int, desde: Optional[date] = None, hasta: Optional[date] = None,
-                           db: Session = Depends(get_db)):
+                           db: Session = Depends(get_db),
+                           empresa_id: Optional[int] = Depends(get_empresa_id)):
     """Datos numéricos (sin generar el PDF completo en la respuesta) usados para
     prellenar la plantilla del modal de envío por correo."""
     hoy = date.today()
     d = desde or hoy.replace(day=1)
     h = hasta or hoy
 
-    cliente, _pdf_bytes, resumen, periodo_label, empresa = _generar_pdf_estado_cuenta(db, cliente_id, d, h)
+    cliente, _pdf_bytes, resumen, periodo_label, empresa = _generar_pdf_estado_cuenta(
+        db, cliente_id, d, h, empresa_id
+    )
 
     return {
         "cliente": {"razon_social": cliente.razon_social, "email": cliente.email or "", "ruc": cliente.ruc},
@@ -214,14 +240,16 @@ class EnviarEstadoCuentaReq(BaseModel):
 
 @router.post("/{cliente_id}/estado-cuenta/enviar")
 def enviar_estado_cuenta(cliente_id: int, data: EnviarEstadoCuentaReq, http_request: Request,
-                          db: Session = Depends(get_db), usuario: Usuario = Depends(get_current_usuario)):
+                          db: Session = Depends(get_db),
+                          usuario: Usuario = Depends(get_current_usuario),
+                          empresa_id: Optional[int] = Depends(get_empresa_id)):
     if not email_configurado():
         raise HTTPException(400, "Configure el email en el archivo .env para poder enviar correos")
     if not data.destinatario or not data.destinatario.strip():
         raise HTTPException(400, "Debe indicar un correo de destino")
 
     cliente, pdf_bytes, _resumen, _periodo_label, _empresa = _generar_pdf_estado_cuenta(
-        db, cliente_id, data.desde, data.hasta,
+        db, cliente_id, data.desde, data.hasta, empresa_id,
     )
     if not pdf_bytes:
         raise HTTPException(500, "Error al generar el PDF del estado de cuenta")
@@ -262,7 +290,16 @@ def listar_docs(
     fecha_hasta: Optional[date] = None,
     venta_id: Optional[int] = None,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
+    # Verificar que el cliente pertenece a la empresa
+    if empresa_id is not None:
+        cli = db.query(Cliente).filter(
+            Cliente.id == cliente_id, Cliente.empresa_id == empresa_id
+        ).first()
+        if not cli:
+            raise HTTPException(404, "Cliente no encontrado")
+
     result = []
 
     # ── Documentos regulares ──────────────────────────────────────────────
@@ -282,7 +319,10 @@ def listar_docs(
         for d in q.all():
             venta_info = None
             if d.venta_id:
-                v = db.query(VentaComercial).filter(VentaComercial.id == d.venta_id).first()
+                qv = db.query(VentaComercial).filter(VentaComercial.id == d.venta_id)
+                if empresa_id is not None:
+                    qv = qv.filter(VentaComercial.empresa_id == empresa_id)
+                v = qv.first()
                 if v:
                     venta_info = {
                         "id": v.id, "tipo_servicio": v.tipo_servicio,
@@ -303,6 +343,8 @@ def listar_docs(
                 VentaComercial.cliente_id == cliente_id,
                 VentaComercial.comprobante_path != None,
             )
+            if empresa_id is not None:
+                qv = qv.filter(VentaComercial.empresa_id == empresa_id)
             if fecha_desde:
                 qv = qv.filter(VentaComercial.fecha >= fecha_desde)
             if fecha_hasta:
@@ -332,7 +374,16 @@ async def subir_doc(
     tipo: str = Form("Otro"),
     venta_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
+    # Verificar que el cliente pertenece a la empresa
+    if empresa_id is not None:
+        cli = db.query(Cliente).filter(
+            Cliente.id == cliente_id, Cliente.empresa_id == empresa_id
+        ).first()
+        if not cli:
+            raise HTTPException(404, "Cliente no encontrado")
+
     if file.size and file.size > 10 * 1024 * 1024:
         raise HTTPException(400, "Archivo mayor a 10 MB")
     upload_dir = UPLOAD_BASE / str(cliente_id)

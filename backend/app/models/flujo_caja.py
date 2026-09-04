@@ -7,6 +7,7 @@ class ConciliacionBancaria(Base):
     __tablename__ = "conciliaciones_bancarias"
 
     id                    = Column(Integer, primary_key=True, index=True)
+    empresa_id            = Column(Integer, ForeignKey("empresas.id"), nullable=True, index=True)
     cuenta_bancaria_id    = Column(Integer, ForeignKey("cuentas_bancarias.id"), nullable=True)
     periodo_desde         = Column(Date, nullable=False)
     periodo_hasta         = Column(Date, nullable=False)

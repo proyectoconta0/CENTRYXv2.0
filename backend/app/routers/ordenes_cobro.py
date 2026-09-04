@@ -9,6 +9,7 @@ from app.models.comercial import VentaComercial, OrdenCobro, OrdenCobroDetalle
 from app.services.empresa_header import get_empresa_header
 from app.services.orden_cobro_pdf import construir_pdf_orden_cobro
 from app.services.conciliacion_service import limpiar_movimiento_sistema_por_pago
+from app.core.security import get_empresa_id
 from database import get_db
 
 router = APIRouter()
@@ -72,8 +73,11 @@ def _cliente_de_orden(ventas: List[VentaComercial]):
     return None, None, "Varios clientes"
 
 
-def _siguiente_numero_orden(db: Session) -> str:
-    rows   = db.query(OrdenCobro.numero_orden).all()
+def _siguiente_numero_orden(db: Session, empresa_id: Optional[int] = None) -> str:
+    q = db.query(OrdenCobro.numero_orden)
+    if empresa_id is not None:
+        q = q.filter(OrdenCobro.empresa_id == empresa_id)
+    rows   = q.all()
     maximo = 0
     for (numero,) in rows:
         if numero and numero.upper().startswith("OC-"):
@@ -126,8 +130,11 @@ def listar_ordenes(
     cliente:      str            = "",
     metodo_cobro: str            = "",
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(OrdenCobro)
+    if empresa_id is not None:
+        q = q.filter(OrdenCobro.empresa_id == empresa_id)
     if desde: q = q.filter(OrdenCobro.fecha_cobro >= desde)
     if hasta: q = q.filter(OrdenCobro.fecha_cobro <= hasta)
     if cliente:
@@ -149,12 +156,15 @@ def listar_documentos_pendientes(
     hasta:  Optional[date] = None,
     search: str            = "",   # RUC, nombre del cliente o N° de documento
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(VentaComercial).filter(
         VentaComercial.tipo_documento.in_(TIPOS_COBRANZA),
         VentaComercial.estado != "Anulada",
         VentaComercial.estado_cobranza != "Pagada",
     )
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
     if desde: q = q.filter(VentaComercial.fecha >= desde)
     if hasta: q = q.filter(VentaComercial.fecha <= hasta)
     if search:
@@ -184,7 +194,8 @@ def listar_documentos_pendientes(
 
 
 @router.post("")
-def crear_orden_cobro(data: OrdenCobroCreate, db: Session = Depends(get_db)):
+def crear_orden_cobro(data: OrdenCobroCreate, db: Session = Depends(get_db),
+                      empresa_id: Optional[int] = Depends(get_empresa_id)):
     if not data.documentos:
         raise HTTPException(400, "Debe seleccionar al menos un documento")
     if not data.fecha_cobro:
@@ -194,7 +205,10 @@ def crear_orden_cobro(data: OrdenCobroCreate, db: Session = Depends(get_db)):
     if len(venta_ids) != len(set(venta_ids)):
         raise HTTPException(400, "No se puede seleccionar el mismo documento más de una vez")
 
-    ventas_por_id = {v.id: v for v in db.query(VentaComercial).filter(VentaComercial.id.in_(venta_ids)).all()}
+    q_ventas = db.query(VentaComercial).filter(VentaComercial.id.in_(venta_ids))
+    if empresa_id is not None:
+        q_ventas = q_ventas.filter(VentaComercial.empresa_id == empresa_id)
+    ventas_por_id = {v.id: v for v in q_ventas.all()}
     if len(ventas_por_id) != len(venta_ids):
         raise HTTPException(404, "Uno o más documentos seleccionados no fueron encontrados")
 
@@ -216,7 +230,7 @@ def crear_orden_cobro(data: OrdenCobroCreate, db: Session = Depends(get_db)):
 
     cliente_id, ruc_cliente, nombre_cliente = _cliente_de_orden(list(ventas_por_id.values()))
     orden = OrdenCobro(
-        numero_orden     = _siguiente_numero_orden(db),
+        numero_orden     = _siguiente_numero_orden(db, empresa_id),
         cliente_id       = cliente_id,
         ruc_cliente      = ruc_cliente,
         nombre_cliente   = nombre_cliente,
@@ -229,6 +243,7 @@ def crear_orden_cobro(data: OrdenCobroCreate, db: Session = Depends(get_db)):
         numero_cheque    = data.numero_cheque or None,
         numero_operacion = data.numero_operacion or None,
         created_at       = date.today(),
+        empresa_id       = empresa_id,
     )
     db.add(orden)
     db.flush()
@@ -253,8 +268,12 @@ def crear_orden_cobro(data: OrdenCobroCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{orden_id}/detalle")
-def detalle_orden(orden_id: int, db: Session = Depends(get_db)):
-    orden = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id).first()
+def detalle_orden(orden_id: int, db: Session = Depends(get_db),
+                  empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(OrdenCobro.empresa_id == empresa_id)
+    orden = q.first()
     if not orden:
         raise HTTPException(404, "Orden de cobro no encontrada")
     return {
@@ -264,8 +283,13 @@ def detalle_orden(orden_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{orden_id}/detalle/{detalle_id}")
-def editar_detalle_orden(orden_id: int, detalle_id: int, data: OrdenCobroDetalleUpdate, db: Session = Depends(get_db)):
-    orden = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id).first()
+def editar_detalle_orden(orden_id: int, detalle_id: int, data: OrdenCobroDetalleUpdate,
+                          db: Session = Depends(get_db),
+                          empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(OrdenCobro.empresa_id == empresa_id)
+    orden = q.first()
     if not orden:
         raise HTTPException(404, "Orden de cobro no encontrada")
     detalle = db.query(OrdenCobroDetalle).filter(
@@ -298,8 +322,12 @@ def editar_detalle_orden(orden_id: int, detalle_id: int, data: OrdenCobroDetalle
 
 
 @router.get("/{orden_id}/pdf")
-def pdf_orden_cobro(orden_id: int, db: Session = Depends(get_db)):
-    orden = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id).first()
+def pdf_orden_cobro(orden_id: int, db: Session = Depends(get_db),
+                    empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(OrdenCobro.empresa_id == empresa_id)
+    orden = q.first()
     if not orden:
         raise HTTPException(404, "Orden de cobro no encontrada")
     empresa = get_empresa_header(db, para_pdf=True)
@@ -312,8 +340,12 @@ def pdf_orden_cobro(orden_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{orden_id}")
-def eliminar_orden_cobro(orden_id: int, db: Session = Depends(get_db)):
-    orden = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id).first()
+def eliminar_orden_cobro(orden_id: int, db: Session = Depends(get_db),
+                          empresa_id: Optional[int] = Depends(get_empresa_id)):
+    q = db.query(OrdenCobro).filter(OrdenCobro.id == orden_id)
+    if empresa_id is not None:
+        q = q.filter(OrdenCobro.empresa_id == empresa_id)
+    orden = q.first()
     if not orden:
         raise HTTPException(404, "Orden de cobro no encontrada")
 

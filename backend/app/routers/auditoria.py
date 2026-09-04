@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from app.models.auditoria import AuditoriaLog
 from app.models.models import Usuario
-from app.core.security import require_administrador
+from app.core.security import require_administrador, get_empresa_id
 
 router = APIRouter()
 
@@ -27,7 +27,9 @@ def _serialize(log: AuditoriaLog) -> dict:
     }
 
 
-def _filtrar(q, usuario_id: Optional[int], modulo: Optional[str], desde: Optional[date], hasta: Optional[date]):
+def _filtrar(q, usuario_id, modulo, desde, hasta, empresa_id):
+    if empresa_id is not None:
+        q = q.filter(AuditoriaLog.empresa_id == empresa_id)
     if usuario_id:
         q = q.filter(AuditoriaLog.usuario_id == usuario_id)
     if modulo:
@@ -49,8 +51,9 @@ def listar(
     per_page: int = 100,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
-    q = _filtrar(db.query(AuditoriaLog), usuario_id, modulo, desde, hasta)
+    q = _filtrar(db.query(AuditoriaLog), usuario_id, modulo, desde, hasta, empresa_id)
     total = q.count()
     rows = (
         q.order_by(AuditoriaLog.fecha_hora.desc())
@@ -59,12 +62,19 @@ def listar(
         .all()
     )
 
+    uq = db.query(Usuario)
+    if empresa_id is not None:
+        uq = uq.filter(Usuario.empresa_id == empresa_id)
     usuarios_disponibles = [
         {"id": u.id, "nombre": u.nombre}
-        for u in db.query(Usuario).order_by(Usuario.nombre.asc()).all()
+        for u in uq.order_by(Usuario.nombre.asc()).all()
     ]
+
+    mq = db.query(AuditoriaLog.modulo).distinct()
+    if empresa_id is not None:
+        mq = mq.filter(AuditoriaLog.empresa_id == empresa_id)
     modulos_disponibles = [
-        m[0] for m in db.query(AuditoriaLog.modulo).distinct().order_by(AuditoriaLog.modulo).all() if m[0]
+        m[0] for m in mq.order_by(AuditoriaLog.modulo).all() if m[0]
     ]
 
     return {
@@ -85,6 +95,7 @@ def exportar(
     hasta: Optional[date] = None,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(require_administrador),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     try:
         from openpyxl import Workbook
@@ -92,7 +103,7 @@ def exportar(
     except ImportError:
         raise HTTPException(500, "Librería openpyxl no instalada. Ejecute: pip install openpyxl")
 
-    q = _filtrar(db.query(AuditoriaLog), usuario_id, modulo, desde, hasta)
+    q = _filtrar(db.query(AuditoriaLog), usuario_id, modulo, desde, hasta, empresa_id)
     rows = q.order_by(AuditoriaLog.fecha_hora.desc()).limit(5000).all()
 
     wb = Workbook()

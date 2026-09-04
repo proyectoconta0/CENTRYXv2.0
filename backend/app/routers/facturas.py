@@ -1,11 +1,12 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
 from app.models.comercial import VentaComercial
 from app.models.models import Cliente
 from pydantic import BaseModel
-from typing import Optional
 from datetime import date
+from app.core.security import get_empresa_id
 
 router = APIRouter()
 
@@ -51,10 +52,13 @@ def listar_facturas(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
     q = db.query(VentaComercial, Cliente.razon_social).join(
         Cliente, VentaComercial.cliente_id == Cliente.id
     )
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
     if search:
         like = f"%{search}%"
         q = q.filter(
@@ -84,13 +88,24 @@ def listar_facturas(
 
 
 @router.post("")
-def crear_factura(data: FacturaCreate, db: Session = Depends(get_db)):
-    cliente = db.query(Cliente).filter(Cliente.id == data.cliente_id).first()
+def crear_factura(
+    data: FacturaCreate,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    # Verificar cliente pertenece a la empresa
+    q_cliente = db.query(Cliente).filter(Cliente.id == data.cliente_id)
+    if empresa_id is not None:
+        q_cliente = q_cliente.filter(Cliente.empresa_id == empresa_id)
+    cliente = q_cliente.first()
     if not cliente:
         raise HTTPException(404, "Cliente no encontrado")
-    if db.query(VentaComercial).filter(
-        VentaComercial.numero_factura == data.numero_factura
-    ).first():
+
+    # Número de factura único por empresa
+    q_dup = db.query(VentaComercial).filter(VentaComercial.numero_factura == data.numero_factura)
+    if empresa_id is not None:
+        q_dup = q_dup.filter(VentaComercial.empresa_id == empresa_id)
+    if q_dup.first():
         raise HTTPException(400, f"Ya existe una factura con el número {data.numero_factura}")
 
     venta = VentaComercial(
@@ -101,6 +116,7 @@ def crear_factura(data: FacturaCreate, db: Session = Depends(get_db)):
         fecha=data.fecha,
         numero_factura=data.numero_factura,
         estado="completada",
+        empresa_id=empresa_id,
     )
     db.add(venta)
     db.commit()
@@ -109,29 +125,46 @@ def crear_factura(data: FacturaCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{factura_id}")
-def obtener_factura(factura_id: int, db: Session = Depends(get_db)):
-    row = (
+def obtener_factura(
+    factura_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = (
         db.query(VentaComercial, Cliente.razon_social)
         .join(Cliente, VentaComercial.cliente_id == Cliente.id)
         .filter(VentaComercial.id == factura_id)
-        .first()
     )
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    row = q.first()
     if not row:
         raise HTTPException(404, "Factura no encontrada")
     return _row_to_dict(row[0], row[1])
 
 
 @router.put("/{factura_id}")
-def actualizar_factura(factura_id: int, data: FacturaUpdate, db: Session = Depends(get_db)):
-    venta = db.query(VentaComercial).filter(VentaComercial.id == factura_id).first()
+def actualizar_factura(
+    factura_id: int,
+    data: FacturaUpdate,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(VentaComercial).filter(VentaComercial.id == factura_id)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    venta = q.first()
     if not venta:
         raise HTTPException(404, "Factura no encontrada")
 
     if data.numero_factura and data.numero_factura != venta.numero_factura:
-        if db.query(VentaComercial).filter(
+        q_dup = db.query(VentaComercial).filter(
             VentaComercial.numero_factura == data.numero_factura,
             VentaComercial.id != factura_id,
-        ).first():
+        )
+        if empresa_id is not None:
+            q_dup = q_dup.filter(VentaComercial.empresa_id == empresa_id)
+        if q_dup.first():
             raise HTTPException(400, f"Ya existe una factura con el número {data.numero_factura}")
 
     for field, val in data.model_dump(exclude_unset=True).items():
@@ -144,8 +177,15 @@ def actualizar_factura(factura_id: int, data: FacturaUpdate, db: Session = Depen
 
 
 @router.delete("/{factura_id}")
-def eliminar_factura(factura_id: int, db: Session = Depends(get_db)):
-    venta = db.query(VentaComercial).filter(VentaComercial.id == factura_id).first()
+def eliminar_factura(
+    factura_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    q = db.query(VentaComercial).filter(VentaComercial.id == factura_id)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    venta = q.first()
     if not venta:
         raise HTTPException(404, "Factura no encontrada")
     db.delete(venta)

@@ -1,8 +1,10 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from app.models.comercial import VentaComercial
+from app.core.security import get_empresa_id
 from pathlib import Path
 
 router = APIRouter()
@@ -10,15 +12,25 @@ UPLOAD_BASE = Path("uploads/comprobantes")
 ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
 
 
+def _get_venta(venta_id: int, db: Session, empresa_id: Optional[int]) -> VentaComercial:
+    """Busca la venta y verifica que pertenezca a la empresa del request."""
+    q = db.query(VentaComercial).filter(VentaComercial.id == venta_id)
+    if empresa_id is not None:
+        q = q.filter(VentaComercial.empresa_id == empresa_id)
+    venta = q.first()
+    if not venta:
+        raise HTTPException(404, "Venta no encontrada")
+    return venta
+
+
 @router.post("/{venta_id}/comprobante")
 async def subir_comprobante(
     venta_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
 ):
-    venta = db.query(VentaComercial).filter(VentaComercial.id == venta_id).first()
-    if not venta:
-        raise HTTPException(404, "Venta no encontrada")
+    venta = _get_venta(venta_id, db, empresa_id)
 
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXT:
@@ -46,9 +58,14 @@ async def subir_comprobante(
 
 
 @router.get("/{venta_id}/comprobante")
-def ver_comprobante(venta_id: int, download: bool = False, db: Session = Depends(get_db)):
-    venta = db.query(VentaComercial).filter(VentaComercial.id == venta_id).first()
-    if not venta or not venta.comprobante_path:
+def ver_comprobante(
+    venta_id: int,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    venta = _get_venta(venta_id, db, empresa_id)
+    if not venta.comprobante_path:
         raise HTTPException(404, "Comprobante no encontrado")
     if not Path(venta.comprobante_path).exists():
         raise HTTPException(404, "Archivo no encontrado en disco")
@@ -61,10 +78,12 @@ def ver_comprobante(venta_id: int, download: bool = False, db: Session = Depends
 
 
 @router.delete("/{venta_id}/comprobante")
-def eliminar_comprobante(venta_id: int, db: Session = Depends(get_db)):
-    venta = db.query(VentaComercial).filter(VentaComercial.id == venta_id).first()
-    if not venta:
-        raise HTTPException(404, "Venta no encontrada")
+def eliminar_comprobante(
+    venta_id: int,
+    db: Session = Depends(get_db),
+    empresa_id: Optional[int] = Depends(get_empresa_id),
+):
+    venta = _get_venta(venta_id, db, empresa_id)
     if venta.comprobante_path:
         Path(venta.comprobante_path).unlink(missing_ok=True)
     venta.comprobante_path = None
