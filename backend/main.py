@@ -281,11 +281,20 @@ def _run_migrations():
         # Garantizar UNIQUE constraint en nombre (create_all() puede haber creado
         # las tablas desde el modelo ORM sin unique=True, lo que hace fallar el
         # ON CONFLICT (nombre) en una base de datos nueva vacía).
-        for sql in [
-            "ALTER TABLE categorias_gasto ADD CONSTRAINT IF NOT EXISTS uq_cat_gasto_nombre UNIQUE (nombre)",
-            "ALTER TABLE areas_gasto ADD CONSTRAINT IF NOT EXISTS uq_area_gasto_nombre UNIQUE (nombre)",
-        ]:
-            conn.execute(text(sql))
+        # Usamos DO block para evitar error si la constraint ya existe.
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE categorias_gasto ADD CONSTRAINT uq_cat_gasto_nombre UNIQUE (nombre);
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END;
+                BEGIN
+                    ALTER TABLE areas_gasto ADD CONSTRAINT uq_area_gasto_nombre UNIQUE (nombre);
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END;
+            END $$;
+        """))
         conn.commit()
 
         # NOTA: create_all() (línea ~37) ya crea estas tablas desde los modelos
