@@ -287,11 +287,11 @@ def _run_migrations():
             BEGIN
                 BEGIN
                     ALTER TABLE categorias_gasto ADD CONSTRAINT uq_cat_gasto_nombre UNIQUE (nombre);
-                EXCEPTION WHEN duplicate_object THEN NULL;
+                EXCEPTION WHEN OTHERS THEN NULL;
                 END;
                 BEGIN
                     ALTER TABLE areas_gasto ADD CONSTRAINT uq_area_gasto_nombre UNIQUE (nombre);
-                EXCEPTION WHEN duplicate_object THEN NULL;
+                EXCEPTION WHEN OTHERS THEN NULL;
                 END;
             END $$;
         """))
