@@ -123,7 +123,6 @@ def obtener_empresa(
 @router.get("/empresa-publica")
 def obtener_empresa_publica(
     db: Session = Depends(get_db),
-    empresa_id: Optional[int] = Depends(get_empresa_id),
     subdominio: Optional[str] = None,
 ):
     # Si llega ?subdominio=xxx (login por URL de empresa), devolver datos
@@ -146,7 +145,7 @@ def obtener_empresa_publica(
         }
 
     # Sin subdominio → login de Centryx (usa ConfiguracionEmpresa normal)
-    empresa = _get_empresa(db, empresa_id)
+    empresa = _get_empresa(db, None)
     return {
         "nombre_empresa": empresa.nombre_empresa or "Centryx",
         "ruc": empresa.ruc or "",
