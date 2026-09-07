@@ -167,11 +167,8 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Nav — centrado verticalmente en el espacio disponible entre el
-          logo y el footer; sin scroll (overflow-hidden): si algún día hay
-          más ítems de los que entran en la pantalla, se recortan en vez de
-          scrollear (así lo pidió el usuario explícitamente). */}
-      <nav className="flex-1 flex flex-col justify-center overflow-hidden px-2 space-y-0.5">
+      {/* Nav — con scroll cuando los ítems no entran en pantalla */}
+      <nav className="flex-1 flex flex-col overflow-y-auto px-2 py-2 space-y-0.5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
         {itemsVisibles.map(renderNavItem)}
 
         {/* Link Admin Panel — solo visible para Superadmin */}
