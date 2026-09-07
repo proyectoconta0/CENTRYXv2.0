@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
 from database import Base
 from datetime import datetime
 
@@ -15,6 +15,7 @@ class Empresa(Base):
     email      = Column(String(200), nullable=True)
     telefono   = Column(String(20), nullable=True)
     logo_url   = Column(String(500), nullable=True)
+    logo_base64 = Column(Text, nullable=True)
     activo     = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=True)
