@@ -309,12 +309,12 @@ function TabEmpresas() {
   };
 
   const handleDesactivar = async (emp) => {
-    if (!window.confirm(`¿Desactivar "${emp.nombre}"? Los usuarios de esta empresa no podrán iniciar sesión.`)) return;
+    if (!window.confirm(`¿Eliminar permanentemente "${emp.nombre}"? Esta acción no se puede deshacer.`)) return;
     try {
       await desactivarEmpresa(emp.id);
       cargar();
     } catch (e) {
-      setError(e.response?.data?.detail || "Error al desactivar empresa.");
+      setError(e.response?.data?.detail || "Error al eliminar empresa.");
     }
   };
 
@@ -405,12 +405,10 @@ function TabEmpresas() {
                         className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors" title="Editar">
                         <HiPencil />
                       </button>
-                      {emp.activo && (
-                        <button onClick={() => handleDesactivar(emp)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 transition-colors" title="Desactivar">
-                          <HiTrash />
-                        </button>
-                      )}
+                      <button onClick={() => handleDesactivar(emp)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 transition-colors" title="Eliminar empresa">
+                        <HiTrash />
+                      </button>
                     </div>
                   </td>
                 </tr>

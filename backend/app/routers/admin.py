@@ -182,8 +182,8 @@ def actualizar_empresa(
     return empresa
 
 
-@router.delete("/empresas/{empresa_id}", summary="Desactivar empresa")
-def desactivar_empresa(
+@router.delete("/empresas/{empresa_id}", summary="Eliminar empresa")
+def eliminar_empresa(
     empresa_id: int,
     db: Session = Depends(get_db),
     _: Usuario = Depends(require_superadmin),
@@ -191,10 +191,10 @@ def desactivar_empresa(
     empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
     if not empresa:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Empresa no encontrada")
-    empresa.activo = False
-    empresa.updated_at = datetime.utcnow()
+    nombre = empresa.nombre
+    db.delete(empresa)
     db.commit()
-    return {"ok": True, "mensaje": f"Empresa '{empresa.nombre}' desactivada"}
+    return {"ok": True, "mensaje": f"Empresa '{nombre}' eliminada"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
