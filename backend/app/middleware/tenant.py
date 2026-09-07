@@ -20,7 +20,7 @@ from app.models.empresa import Empresa
 ADMIN_SUBDOMAIN = "admin"
 
 # Rutas que siempre se dejan pasar sin consultar la BD
-_BYPASS_EXACT = {"/", "/docs", "/openapi.json", "/redoc"}
+_BYPASS_EXACT = {"/", "/docs", "/openapi.json", "/redoc", "/api/configuracion/empresa-publica"}
 _BYPASS_PREFIX = ("/api/admin/", "/api/auth/login", "/api/auth/")
 
 
@@ -90,6 +90,12 @@ def _extract_subdomain(host: str) -> Optional[str]:
     parts = host.split(".")
     # jyd.centryx.pe → 3 partes → subdominio = parts[0]
     # centryx.pe     → 2 partes → sin subdominio
+    # Solo extraer subdominio si el host pertenece al dominio propio (centryx.pe)
+    # Esto evita que dominios de Railway/hosting se traten como subdominios de tenant
+    DOMINIO_BASE = "centryx.pe"
+    if not host.endswith(DOMINIO_BASE):
+        return None
+
     if len(parts) >= 3:
         sub = parts[0]
         return None if sub == "www" else sub
