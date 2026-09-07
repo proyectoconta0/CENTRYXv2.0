@@ -30,7 +30,7 @@ export default function Login() {
 
   const nombreEmpresa = empresa?.nombre_empresa || "Centryx";
   const subtitulo = empresa?.ruc ? `${nombreEmpresa} · RUC ${empresa.ruc}` : nombreEmpresa;
-  const logoUrl = empresa?.logo_url || null;
+  const logoUrl = empresa?.logo_base64 || empresa?.logo_url || null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();

@@ -127,6 +127,7 @@ def obtener_empresa_publica(
     subdominio: Optional[str] = None,
 ):
     # Si llega ?subdominio=xxx (login por URL de empresa), buscar por subdominio
+    tenant = None
     if subdominio:
         tenant = db.query(Empresa).filter(
             Empresa.subdominio == subdominio,
@@ -137,10 +138,23 @@ def obtener_empresa_publica(
         empresa_id = tenant.id
 
     empresa = _get_empresa(db, empresa_id)
+
+    # Nombre: usa ConfiguracionEmpresa si ya fue configurada, sino cae al nombre
+    # del modelo Empresa (que se crea desde el panel de superadmin)
+    nombre = empresa.nombre_empresa or (tenant.nombre if tenant else "") or "Centryx"
+
+    # Logo: prioridad → base64 de ConfiguracionEmpresa → base64 del modelo Empresa
+    #        → path guardado → None
+    logo = (
+        empresa.logo_base64
+        or (tenant.logo_base64 if tenant else None)
+        or (f"/api/configuracion/empresa/logo" if empresa.logo_path else None)
+    )
+
     return {
-        "nombre_empresa": empresa.nombre_empresa or "",
-        "ruc": empresa.ruc or "",
-        "logo_url": empresa.logo_path or None,
+        "nombre_empresa": nombre,
+        "ruc": empresa.ruc or (tenant.ruc if tenant else "") or "",
+        "logo_url": logo,
         "color_principal": empresa.color_principal or "#1e40af",
         "subdominio": subdominio or "",
     }
