@@ -1,15 +1,18 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   HiOfficeBuilding, HiUsers, HiPlus, HiPencil, HiTrash,
   HiCheckCircle, HiXCircle, HiRefresh, HiX, HiSave,
-  HiShieldCheck, HiGlobe,
+  HiShieldCheck, HiGlobe, HiClipboardCopy, HiPhotograph,
 } from "react-icons/hi";
 import {
   getEmpresas, crearEmpresa, actualizarEmpresa, desactivarEmpresa,
   getUsuariosAdmin, crearUsuarioAdmin, actualizarUsuarioAdmin, desactivarUsuario,
-  getPlanes,
+  getPlanes, subirLogoEmpresa,
 } from "../api/adminApi";
+
 import { ROLES_DISPONIBLES } from "../core/permisos";
+
+const FRONTEND_URL = "https://adaptable-tenderness-production-c852.up.railway.app";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,11 +58,26 @@ function Modal({ title, onClose, children }) {
 function FormEmpresa({ inicial, planes, onGuardar, onCancelar, cargando }) {
   const [form, setForm] = useState({
     nombre: "", ruc: "", subdominio: "", plan: "basico",
-    email: "", telefono: "", logo_url: "", activo: true,
+    email: "", telefono: "", logo_url: "", logo_base64: "", activo: true,
     ...inicial,
   });
+  const [logoPreview, setLogoPreview] = useState(inicial?.logo_base64 || inicial?.logo_url || "");
+  const fileRef = useRef(null);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const b64 = ev.target.result;
+      setLogoPreview(b64);
+      set("logo_base64", b64);
+      set("logo_url", "");
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -107,15 +125,30 @@ function FormEmpresa({ inicial, planes, onGuardar, onCancelar, cargando }) {
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
         <div className="col-span-2">
-          <label className="block text-sm font-medium text-slate-700 mb-1">URL del Logo</label>
-          <input value={form.logo_url || ""} onChange={(e) => set("logo_url", e.target.value)}
-            placeholder="https://..." className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          {form.logo_url && (
-            <div className="mt-2 flex items-center gap-2">
-              <img src={form.logo_url} alt="preview" className="w-10 h-10 object-contain rounded border border-slate-200" onError={(e) => e.target.style.display = "none"} />
-              <span className="text-xs text-slate-400">Vista previa</span>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Logo de la empresa</label>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+          <div className="flex items-center gap-4">
+            {logoPreview ? (
+              <img src={logoPreview} alt="logo" className="w-14 h-14 object-contain rounded-lg border border-slate-200 bg-white p-1" />
+            ) : (
+              <div className="w-14 h-14 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-300">
+                <HiPhotograph className="text-2xl" />
+              </div>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <button type="button" onClick={() => fileRef.current?.click()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-600 transition-colors">
+                <HiPhotograph /> {logoPreview ? "Cambiar imagen" : "Seleccionar imagen"}
+              </button>
+              {logoPreview && (
+                <button type="button" onClick={() => { setLogoPreview(""); set("logo_base64", ""); set("logo_url", ""); }}
+                  className="text-xs text-red-500 hover:text-red-700 text-left">
+                  Quitar logo
+                </button>
+              )}
+              <p className="text-xs text-slate-400">PNG, JPG o SVG. Se guarda como imagen.</p>
             </div>
-          )}
+          </div>
         </div>
         {inicial?.id && (
           <div className="col-span-2 flex items-center gap-2">
@@ -229,6 +262,15 @@ function TabEmpresas() {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
   const [filtroActivo, setFiltroActivo] = useState("");
+  const [copiadoId, setCopiadoId] = useState(null);
+
+  const copiarUrl = (subdominio) => {
+    const url = `${FRONTEND_URL}/login?empresa=${subdominio}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiadoId(subdominio);
+      setTimeout(() => setCopiadoId(null), 2000);
+    });
+  };
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -324,8 +366,8 @@ function TabEmpresas() {
                 <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      {emp.logo_url ? (
-                        <img src={emp.logo_url} alt="" className="w-8 h-8 rounded object-contain border border-slate-200 bg-white" onError={(e) => e.target.style.display = "none"} />
+                      {(emp.logo_base64 || emp.logo_url) ? (
+                        <img src={emp.logo_base64 || emp.logo_url} alt="" className="w-8 h-8 rounded object-contain border border-slate-200 bg-white" onError={(e) => e.target.style.display = "none"} />
                       ) : (
                         <div className="w-8 h-8 rounded bg-blue-100 flex items-center justify-center text-blue-600">
                           <HiOfficeBuilding />
@@ -347,7 +389,18 @@ function TabEmpresas() {
                   <td className="px-4 py-3"><PlanBadge plan={emp.plan} /></td>
                   <td className="px-4 py-3"><Badge activo={emp.activo} /></td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => copiarUrl(emp.subdominio)}
+                        className={`flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg transition-colors ${
+                          copiadoId === emp.subdominio
+                            ? "bg-green-100 text-green-700"
+                            : "text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                        }`}
+                        title="Copiar URL de login">
+                        <HiClipboardCopy />
+                        {copiadoId === emp.subdominio ? "¡Copiado!" : "URL"}
+                      </button>
                       <button onClick={() => setModal({ tipo: "editar", empresa: emp })}
                         className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors" title="Editar">
                         <HiPencil />
