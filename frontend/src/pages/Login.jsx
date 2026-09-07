@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { loginApi } from "../api/dashboardApi";
-import { getEmpresaPublica } from "../api/configuracionApi";
+import { getEmpresaPublica, getEmpresaPorSubdominio } from "../api/configuracionApi";
 import { HiLightningBolt, HiLockClosed, HiMail } from "react-icons/hi";
 
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const subdominioParam = searchParams.get("empresa");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -15,10 +17,16 @@ export default function Login() {
   const [empresa, setEmpresa] = useState(null);
 
   useEffect(() => {
-    getEmpresaPublica()
-      .then(setEmpresa)
-      .catch(() => setEmpresa(null));
-  }, []);
+    if (subdominioParam) {
+      getEmpresaPorSubdominio(subdominioParam)
+        .then(setEmpresa)
+        .catch(() => setEmpresa(null));
+    } else {
+      getEmpresaPublica()
+        .then(setEmpresa)
+        .catch(() => setEmpresa(null));
+    }
+  }, [subdominioParam]);
 
   const nombreEmpresa = empresa?.nombre_empresa || "Centryx";
   const subtitulo = empresa?.ruc ? `${nombreEmpresa} · RUC ${empresa.ruc}` : nombreEmpresa;
@@ -31,7 +39,11 @@ export default function Login() {
     try {
       const data = await loginApi(email, password);
       login(data.access_token, data.usuario);
-      navigate("/");
+      if (data.usuario.rol === "superadmin") {
+        navigate("/admin");
+      } else {
+        navigate("/");
+      }
     } catch {
       setError("Credenciales incorrectas. Intente nuevamente.");
     } finally {

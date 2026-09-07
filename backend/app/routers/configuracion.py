@@ -16,6 +16,7 @@ from app.core.security import (
     RUBROS, ROLES_DISPONIBLES, get_current_usuario, require_administrador, get_empresa_id,
 )
 from app.models.configuracion import ConfiguracionAlerta, ConfiguracionDocumento, ConfiguracionEmpresa
+from app.models.empresa import Empresa
 from app.models.models import (
     Usuario, Cliente, Gasto, Proveedor, CategoriaGasto, AreaGasto,
     PagoGasto, Prestamo, CuotaPrestamo, Garantia, PagoGarantia, MovimientoCaja,
@@ -123,11 +124,25 @@ def obtener_empresa(
 def obtener_empresa_publica(
     db: Session = Depends(get_db),
     empresa_id: Optional[int] = Depends(get_empresa_id),
+    subdominio: Optional[str] = None,
 ):
+    # Si llega ?subdominio=xxx (login por URL de empresa), buscar por subdominio
+    if subdominio:
+        tenant = db.query(Empresa).filter(
+            Empresa.subdominio == subdominio,
+            Empresa.activo == True,
+        ).first()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Empresa no encontrada")
+        empresa_id = tenant.id
+
     empresa = _get_empresa(db, empresa_id)
     return {
         "nombre_empresa": empresa.nombre_empresa or "",
         "ruc": empresa.ruc or "",
+        "logo_url": empresa.logo_path or None,
+        "color_principal": empresa.color_principal or "#1e40af",
+        "subdominio": subdominio or "",
     }
 
 

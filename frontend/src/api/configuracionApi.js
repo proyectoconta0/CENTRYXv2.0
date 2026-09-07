@@ -31,6 +31,7 @@ export const getEmpresa = () => API.get("/empresa").then(r => r.data);
 // Sin token — para la pantalla de Login, antes de autenticarse. Solo trae
 // nombre_empresa y ruc (ver comentario del endpoint en configuracion.py).
 export const getEmpresaPublica = () => API.get("/empresa-publica").then(r => r.data);
+export const getEmpresaPorSubdominio = (subdominio) => API.get(`/empresa-publica?subdominio=${subdominio}`).then(r => r.data);
 export const updateEmpresa = (data) => API.put("/empresa", data).then(r => r.data);
 export const subirLogo = (file) => {
   const fd = new FormData();
