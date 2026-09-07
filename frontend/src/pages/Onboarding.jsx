@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { HiCheck, HiArrowRight, HiUpload, HiPlus, HiTrash } from "react-icons/hi";
+import { HiCheck, HiArrowRight, HiUpload } from "react-icons/hi";
 import { consultarRuc } from "../api/comercialApi";
-import { updateEmpresa, updateRubro, subirLogo, crearUsuario, getRubro } from "../api/configuracionApi";
+import { updateEmpresa, updateRubro, subirLogo, getRubro } from "../api/configuracionApi";
 import { useEmpresa } from "../context/EmpresaContext";
 import Toast from "../components/Toast";
 
-const PASOS = ["Empresa", "Rubro", "Personalizar", "Usuarios"];
-const ROLES = ["Administrador", "Vendedor"];
+const PASOS = ["Empresa", "Rubro", "Personalizar"];
 
 const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white";
 
@@ -36,10 +35,6 @@ export default function Onboarding() {
   const [logoPreview, setLogoPreview] = useState(null);
   const [color, setColor] = useState("#1e40af");
   const [moneda, setMoneda] = useState("PEN");
-
-  // Paso 4 — Usuarios
-  const [usuarios, setUsuarios] = useState([]);
-  const [nuevoUsuario, setNuevoUsuario] = useState({ nombre: "", email: "", rol: "Vendedor" });
 
   useEffect(() => {
     getRubro()
@@ -86,15 +81,6 @@ export default function Onboarding() {
     setLogoPreview(URL.createObjectURL(file));
   };
 
-  function agregarUsuario() {
-    if (!nuevoUsuario.nombre.trim() || !nuevoUsuario.email.trim()) return;
-    setUsuarios(u => [...u, { ...nuevoUsuario, password: Math.random().toString(36).slice(-8) }]);
-    setNuevoUsuario({ nombre: "", email: "", rol: "Vendedor" });
-  }
-  function quitarUsuario(i) {
-    setUsuarios(u => u.filter((_, idx) => idx !== i));
-  }
-
   function puedeAvanzar() {
     if (paso === 1) return empresaForm.nombre_empresa.trim().length > 0;
     if (paso === 2) return !!rubro;
@@ -116,10 +102,6 @@ export default function Onboarding() {
         moneda_principal: moneda,
         onboarding_completado: true,
       });
-
-      for (const u of usuarios) {
-        try { await crearUsuario(u); } catch { /* continuar con los demás */ }
-      }
 
       await recargarEmpresa();
 
@@ -262,47 +244,6 @@ export default function Onboarding() {
             </div>
           )}
 
-          {paso === 4 && (
-            <div>
-              <h2 className="text-xl font-bold text-gray-800 mb-1">¿Quién más usará el sistema?</h2>
-              <p className="text-sm text-gray-500 mb-6">Puedes agregar usuarios ahora o después desde Configuración.</p>
-
-              <div className="grid grid-cols-[1fr_1fr_120px_40px] gap-2 mb-3 items-end">
-                <div>
-                  <label className="text-xs text-gray-500">Nombre</label>
-                  <input value={nuevoUsuario.nombre} onChange={e => setNuevoUsuario(u => ({ ...u, nombre: e.target.value }))} className={inputCls} />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">Email</label>
-                  <input value={nuevoUsuario.email} onChange={e => setNuevoUsuario(u => ({ ...u, email: e.target.value }))} className={inputCls} />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">Rol</label>
-                  <select value={nuevoUsuario.rol} onChange={e => setNuevoUsuario(u => ({ ...u, rol: e.target.value }))} className={inputCls}>
-                    {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                </div>
-                <button onClick={agregarUsuario} className="h-9 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
-                  <HiPlus />
-                </button>
-              </div>
-
-              {usuarios.length > 0 && (
-                <div className="space-y-1.5 mt-4">
-                  {usuarios.map((u, i) => (
-                    <div key={i} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg text-sm">
-                      <span className="text-gray-700">{u.nombre} <span className="text-gray-400">· {u.email}</span></span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">{u.rol}</span>
-                        <button onClick={() => quitarUsuario(i)} className="text-gray-400 hover:text-red-600"><HiTrash /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
           {error && <p className="text-sm text-red-600 mt-4">{error}</p>}
 
           <div className="flex justify-between mt-8">
@@ -313,7 +254,7 @@ export default function Onboarding() {
             >
               ← Atrás
             </button>
-            {paso < 4 ? (
+            {paso < 3 ? (
               <button
                 onClick={() => puedeAvanzar() && setPaso(p => p + 1)}
                 disabled={!puedeAvanzar()}
